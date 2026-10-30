@@ -1,9 +1,9 @@
-"""Scene-level checks with CLIP: sex scenes, intense kissing, strippers.
+"""Scene-level checks: sex scenes and sexually suggestive scenes (strippers, underwear, kissing).
 
-NudeNet only sees exposed body parts, so a sex scene shot with bare backs, shoulders or under
-sheets goes unnoticed. CLIP looks at the whole picture and scores it against text descriptions
-("a couple having sex in bed", "people talking", ...). Each sampled frame gets a probability
-per category; shots are averaged, and runs of flagged shots become one scene.
+NudeNet only sees exposed body parts, so a sex scene shot with bare backs or under sheets goes
+unnoticed, and it can't judge a whole scene. Here every checked frame is turned into a CLIP
+picture embedding and asked two questions (see frame_signals). A scene is flagged only when the
+signal holds across a camera shot for a few seconds, never on a single frame.
 """
 import bisect
 import os
@@ -16,97 +16,150 @@ SIZE = 224
 MEAN = np.array([0.48145466, 0.4578275, 0.40821073], np.float32)
 STD = np.array([0.26862954, 0.26130258, 0.27577711], np.float32)
 LOGIT_SCALE = 100.0
-# Raw match strength (cosine x 100) a category's best description must reach to count at all.
-# "an erotic scene" matches any film still a little (~17-18, even a desert); real sex scenes
-# reach 21-24. Between GATE_LO and GATE_HI the score fades in.
-GATE_LO, GATE_HI = 18.5, 20.5
 
-# What to look for. Every prompt competes with every other one (softmax), so the long
-# "other" list is what keeps ordinary shots from scoring high: a dark close-up of a face
-# has to look more like "a couple having sex" than like "a close-up of a man's face".
-PROMPTS = {
+CATEGORIES = ("sex", "suggestive")
+SIGNAL = {"sex": "nsfw_sex", "suggestive": "nsfw_sugg"}
+
+# Scene rules, tuned on Deadpool (2016) against known scenes (tests/tune_scan.py):
+# a shot counts when enough of its frames pass the bar; nearby counting shots join into a scene.
+STRONG, STRONG_SHARE, STRONG_SECONDS = 0.8, 0.4, 3.0        # covered without asking
+POSSIBLE, POSSIBLE_SHARE, POSSIBLE_SECONDS = 0.7, 0.3, 1.5  # listed in review, not covered
+SCENE_GAP = 20.0   # seconds between counting shots that still makes them one scene (a sex scene
+                   # intercut with calmer shots stays one scene; Oppenheimer 23:00 has 15 s gaps)
+NEAR = 2.0         # seconds around a body-part detection to look for agreement
+
+# ---------------------------------------------------------------- frame signals (v2)
+# Two questions per frame, answered by two models on the same CLIP picture embedding:
+#  1. "Is this sexual at all?" - LAION's NSFW detector, trained on many labeled images
+#     (explicit 100%, lingerie/bikini ~95%, ordinary photos ~6% on LAION's test set).
+#  2. "What kind?" - CLIP text descriptions: sex, nudity, suggestive, swimsuit or ordinary.
+#     The ordinary list includes the things that fooled the old version (logos, credits, red
+#     superhero suits, fights).
+
+NSFW_WEIGHTS = os.path.join(os.path.dirname(__file__), "models", "laion_nsfw_l14.npz")
+
+KIND_PROMPTS = {
     "sex": [
-        "a sex scene in a movie",
-        "a couple having sex in bed",
-        "a naked couple in bed",
+        "a couple having sex",
+        "two naked people in bed together",
+        "people making love",
         "a naked woman on top of a man",
-        "two people making love",
-        "an erotic scene",
-        "a nude woman",
+        "an explicit sex scene",
+    ],
+    "nude": [
+        "a naked woman",
         "a topless woman",
+        "a naked man",
+        "bare breasts",
+        "a nude body",
     ],
-    "kissing": [
-        "a couple kissing passionately",
-        "two people making out",
-    ],
-    "strippers": [
-        "a stripper dancing",
-        "a woman pole dancing in a strip club",
+    "suggestive": [
+        "a woman in lingerie",
+        "a woman in her underwear",
+        "a woman in a bra and panties",
+        "a stripper dancing on a pole",
+        "a strip club with dancers",
         "a lap dance",
+        "a couple kissing passionately",
+    ],
+    "swimsuit": [
+        "a woman in a bikini at the beach",
+        "people in swimsuits at a pool",
     ],
     "other": [
-        "people talking",
-        "two people having a conversation",
-        "a close-up of a man's face",
-        "a close-up of a woman's face",
-        "a man in a suit",
-        "a woman in a dress",
-        "a man and a woman sitting together",
-        "a man lying in bed alone",
-        "a couple hugging",
-        "people at a party",
-        "a crowd of people",
-        "people sitting at a table",
-        "a man reading a book",
-        "a man smoking",
-        "a city street",
-        "a landscape",
-        "an explosion",
-        "a dark room",
-        "a black screen",
-        "a blurry photo",
-        "a man and a woman dancing",
-        "a woman in a swimsuit at the beach",
-        "people in an office",
-        "a classroom",
-        "a man shirtless",
-        "a man and a woman standing in a room",
-        "a woman wearing a robe",
+        "people talking", "two people having a conversation", "a close-up of a face",
+        "a man in a suit", "a woman in a dress", "a man and a woman sitting together",
+        "a couple hugging", "people at a party", "a crowd of people", "people in a bar",
+        "people sitting at a table", "a man lying in bed alone", "a man shirtless",
+        "a superhero in a red costume", "a man in a red suit and mask", "a man with a scarred face",
+        "a fight scene", "a car chase", "an explosion", "a man holding a gun", "soldiers",
+        "a movie studio logo", "film credits on a black background", "text on a screen", "a title card",
+        "a cartoon", "a city street", "a landscape", "a room interior", "a dark room", "a black screen",
+        "a hospital", "an office", "a laboratory", "a kitchen", "the inside of a car",
     ],
 }
-CATEGORIES = ("sex", "kissing", "strippers")
+KINDS = tuple(KIND_PROMPTS)
 
-# Per-shot average probability to cover a shot without asking, and to list it for review.
-COVER_SCORE = {"sex": 0.50, "kissing": 0.55, "strippers": 0.55}
-REVIEW_SCORE = {"sex": 0.25, "kissing": 0.30, "strippers": 0.30}
-SCENE_GAP = 10.0         # flagged shots this close together (seconds) are one scene
+_text_cache: dict = {}
+_nsfw_cache: dict = {}
 
 
-class SceneDetector:
-    def __init__(self, log=print):
+def kind_text_embeds() -> tuple[np.ndarray, np.ndarray]:
+    """(text embeddings, kind label per row) for KIND_PROMPTS, computed once."""
+    if "emb" not in _text_cache:
         import onnxruntime as ort
         from tokenizers import Tokenizer
 
-        from .media import onnx_providers
-        providers = onnx_providers()
-        self.vision = ort.InferenceSession(os.path.join(MODEL_DIR, "vision_model.onnx"), providers=providers)
-        self.gpu = self.vision.get_providers()[0].startswith("CUDA")
-        text = ort.InferenceSession(os.path.join(MODEL_DIR, "text_model.onnx"), providers=providers)
+        text = ort.InferenceSession(os.path.join(MODEL_DIR, "text_model.onnx"), providers=["CPUExecutionProvider"])
         tok = Tokenizer.from_file(os.path.join(MODEL_DIR, "tokenizer.json"))
-        self.labels, embeds = [], []
-        for cat, prompts in PROMPTS.items():
+        rows, labels = [], []
+        for kind, prompts in KIND_PROMPTS.items():
             for p in prompts:
                 ids = np.array([tok.encode(p).ids], np.int64)
                 feeds = {i.name: (ids if i.name == "input_ids" else np.ones_like(ids)) for i in text.get_inputs()}
                 out = dict(zip([o.name for o in text.get_outputs()], text.run(None, feeds)))
                 e = out.get("text_embeds", next(iter(out.values())))[0]
-                embeds.append(e / np.linalg.norm(e))
-                self.labels.append(cat)
-        del text
-        self.text = np.stack(embeds).astype(np.float32)
-        self.labels = np.array(self.labels)
+                rows.append(e / np.linalg.norm(e))
+                labels.append(kind)
+        _text_cache["emb"] = (np.stack(rows).astype(np.float32), np.array(labels))
+    return _text_cache["emb"]
+
+
+def nsfw_score(emb: np.ndarray) -> np.ndarray:
+    """LAION NSFW probability for L2-normalized CLIP ViT-L/14 image embeddings (..., 768)."""
+    if "w" not in _nsfw_cache:
+        _nsfw_cache["w"] = dict(np.load(NSFW_WEIGHTS))
+    w = _nsfw_cache["w"]
+    x = (emb - w["mean"]) / np.sqrt(np.maximum(w["var"], 1e-7))
+    for i in (1, 2, 3):
+        x = np.maximum(x @ w[f"w{i}"] + w[f"b{i}"], 0)
+    z = (x @ w["w4"] + w["b4"])[..., 0]
+    return 1.0 / (1.0 + np.exp(-z))
+
+
+def kind_probs(emb: np.ndarray) -> dict[str, np.ndarray]:
+    """Share of each kind (sex, nude, ...) for normalized embeddings (..., 768)."""
+    text, labels = kind_text_embeds()
+    logits = LOGIT_SCALE * emb @ text.T
+    p = np.exp(logits - logits.max(axis=-1, keepdims=True))
+    p /= p.sum(axis=-1, keepdims=True)
+    return {k: p[..., labels == k].sum(axis=-1) for k in KINDS}
+
+
+NUDE_CLASSES = {"FEMALE_BREAST_EXPOSED", "FEMALE_GENITALIA_EXPOSED", "MALE_GENITALIA_EXPOSED",
+                "BUTTOCKS_EXPOSED", "ANUS_EXPOSED"}
+
+
+def frame_signals(emb: np.ndarray, valid: np.ndarray, dets: list) -> dict[str, np.ndarray]:
+    """Per-frame signals from crop embeddings (N, crops, 768, normalized; `valid` marks real
+    crops) and NudeNet detections ([[class, score, ...], ...] per frame). Each crop is scored on
+    its own and the worst crop wins, so something at the side of a wide frame still counts."""
+    nsfw = np.where(valid, nsfw_score(emb), 0.0)
+    kinds = kind_probs(emb)
+    out = {"nsfw": nsfw.max(axis=1)}
+    for k in ("sex", "nude", "suggestive", "swimsuit"):
+        out[k] = np.where(valid, kinds[k], 0.0).max(axis=1)
+    # Sexual AND of a sexual kind (not a swimsuit, not ordinary), per crop.
+    sexual = kinds["sex"] + kinds["nude"]
+    out["nsfw_sex"] = np.where(valid, nsfw * np.clip(sexual / np.maximum(sexual + kinds["other"] + kinds["swimsuit"], 1e-6), 0, 1), 0).max(axis=1)
+    out["nsfw_sugg"] = np.where(valid, nsfw * np.clip(kinds["suggestive"] / np.maximum(kinds["suggestive"] + kinds["other"] + kinds["swimsuit"], 1e-6), 0, 1), 0).max(axis=1)
+    out["nudenet"] = np.array([max([d[1] for d in fd if d[0] in NUDE_CLASSES], default=0.0) for fd in dets])
+    return out
+
+
+class SceneDetector:
+    """CLIP picture embeddings for sampled frames, turned into frame_signals."""
+
+    def __init__(self, log=print):
+        import onnxruntime as ort
+
+        from .media import onnx_providers
+        self.vision = ort.InferenceSession(os.path.join(MODEL_DIR, "vision_model.onnx"), providers=onnx_providers())
+        self.gpu = self.vision.get_providers()[0].startswith("CUDA")
         self.input = self.vision.get_inputs()[0].name
-        log(f"Scene detection on {'GPU' if self.gpu else 'CPU'} (CLIP ViT-L/14, {len(self.labels)} descriptions)")
+        kind_text_embeds()
+        nsfw_score(np.zeros((1, 768), np.float32))
+        log(f"Scene detection on {'GPU' if self.gpu else 'CPU'} (CLIP ViT-L/14 + LAION NSFW detector)")
 
     def _crops(self, bgr: np.ndarray) -> np.ndarray:
         """Square crops covering the whole frame (wide films get left, middle and right)."""
@@ -122,70 +175,63 @@ class SceneDetector:
             crops.append(((c.astype(np.float32) / 255.0 - MEAN) / STD).transpose(2, 0, 1))
         return np.stack(crops)
 
-    def score(self, bgr: np.ndarray) -> dict[str, float]:
-        """Probability of each category; the highest-scoring crop wins."""
+    def embed(self, bgr: np.ndarray) -> np.ndarray:
+        """Normalized CLIP embedding of each crop, (crops, 768)."""
         out = self.vision.run(None, {self.input: self._crops(bgr)})
         names = [o.name for o in self.vision.get_outputs()]
         emb = dict(zip(names, out)).get("image_embeds", out[0])
-        emb = emb / np.linalg.norm(emb, axis=1, keepdims=True)
-        logits = LOGIT_SCALE * emb @ self.text.T
-        probs = np.exp(logits - logits.max(axis=1, keepdims=True))
-        probs /= probs.sum(axis=1, keepdims=True)
-        out = {}
-        for cat in CATEGORIES:
-            mine = self.labels == cat
-            gate = np.clip((logits[:, mine].max(axis=1) - GATE_LO) / (GATE_HI - GATE_LO), 0, 1)
-            out[cat] = round(float((probs[:, mine].sum(axis=1) * gate).max()), 3)
-        return out
+        return emb / np.linalg.norm(emb, axis=1, keepdims=True)
+
+    def score(self, bgr: np.ndarray) -> dict[str, float]:
+        emb = self.embed(bgr)[None]
+        sig = frame_signals(emb, np.ones(emb.shape[:2], bool), [[]])
+        return {k: round(float(v[0]), 3) for k, v in sig.items() if k != "nudenet"}
 
 
-def shot_scores(samples: list[dict], cuts: list[float], duration: float) -> list[dict]:
-    """Average each category over the scene-checked samples of each camera shot."""
+def _scene_dt(samples: list[dict]) -> float:
+    ts = [s["t"] for s in samples if "scene" in s]
+    return float(np.median(np.diff(ts))) if len(ts) > 1 else 0.5
+
+
+def find_scenes(samples: list[dict], cuts: list[float], duration: float, category: str) -> list[dict]:
+    """[{start, end, score, sure}] for one category. Each camera shot counts as strong or possible
+    when enough of its checked frames pass the bar; counting shots within SCENE_GAP join up.
+    A scene is `sure` with at least STRONG_SECONDS of strong frames, otherwise it's only listed
+    for review if it has POSSIBLE_SECONDS of possible frames."""
+    sig = SIGNAL[category]
+    dt = _scene_dt(samples)
     bounds = [0.0] + [c for c in cuts if 0 < c < duration] + [duration]
-    shots = [{"start": a, "end": b, "n": 0, "sum": dict.fromkeys(CATEGORIES, 0.0), "peak": dict.fromkeys(CATEGORIES, 0.0)}
-             for a, b in zip(bounds, bounds[1:]) if b > a]
-    starts = [s["start"] for s in shots]
+    starts = bounds[:-1]
+    per_shot: dict[int, list[float]] = {}
     for s in samples:
-        if "scene" not in s:
+        if "scene" in s:
+            per_shot.setdefault(max(0, bisect.bisect_right(starts, s["t"]) - 1), []).append(s["scene"][sig])
+    scenes: list[dict] = []
+    for i, vals in sorted(per_shot.items()):
+        v = np.array(vals)
+        strong, possible = int((v >= STRONG).sum()), int((v >= POSSIBLE).sum())
+        if not (strong and strong / len(v) >= STRONG_SHARE) and not (possible and possible / len(v) >= POSSIBLE_SHARE):
             continue
-        shot = shots[max(0, bisect.bisect_right(starts, s["t"]) - 1)]
-        shot["n"] += 1
-        for cat, p in s["scene"].items():
-            shot["sum"][cat] += p
-            shot["peak"][cat] = max(shot["peak"][cat], p)
+        a, b = bounds[i], bounds[i + 1]
+        strong_s = strong * dt if strong / len(v) >= STRONG_SHARE else 0.0
+        if scenes and a - scenes[-1]["end"] <= SCENE_GAP:
+            sc = scenes[-1]
+            sc["end"], sc["strong_s"], sc["possible_s"] = b, sc["strong_s"] + strong_s, sc["possible_s"] + possible * dt
+            sc["score"] = max(sc["score"], float(v.max()))
+        else:
+            scenes.append({"start": a, "end": b, "strong_s": strong_s, "possible_s": possible * dt, "score": float(v.max())})
     out = []
-    for s in shots:
-        n = max(s["n"], 1)
-        out.append({"start": round(s["start"], 3), "end": round(s["end"], 3), "samples": s["n"],
-                    "score": {c: round(s["sum"][c] / n, 3) for c in CATEGORIES},
-                    "peak": {c: round(s["peak"][c], 3) for c in CATEGORIES}})
+    for sc in scenes:
+        sc["sure"] = sc["strong_s"] >= STRONG_SECONDS
+        if sc["sure"] or sc["possible_s"] >= POSSIBLE_SECONDS:
+            out.append(sc)
     return out
 
 
-def find_scenes(shots: list[dict], category: str) -> list[dict]:
-    """Runs of shots that look like `category`.
-
-    Returns [{start, end, score, sure}]: `sure` scenes have at least one shot above COVER_SCORE;
-    the rest only reached REVIEW_SCORE and are offered in review.
-    """
-    scenes: list[dict] = []
-    for s in shots:
-        p = s["score"][category]
-        if p < REVIEW_SCORE[category] or not s["samples"]:
-            continue  # unflagged shots shorter than SCENE_GAP between flagged ones still join the scene
-        if scenes and s["start"] - scenes[-1]["end"] <= SCENE_GAP:
-            sc = scenes[-1]
-            sc["end"] = s["end"]
-            sc["score"] = max(sc["score"], p)
-            sc["shots"] += 1
-            sc["strong"] += s["samples"] if p >= COVER_SCORE[category] else 0
-        else:
-            scenes.append({"start": s["start"], "end": s["end"], "score": p, "shots": 1,
-                           "strong": s["samples"] if p >= COVER_SCORE[category] else 0})
-    for sc in scenes:
-        # Covered without asking only if clearly seen in more than one checked frame.
-        sc["sure"] = sc["strong"] >= 2
-    return scenes
+def nsfw_near(samples: list[dict], a: float, b: float) -> float:
+    """Highest "sexual, and sex or nudity" score from NEAR seconds before a to NEAR seconds after b.
+    (The plain NSFW score alone is also high on red superhero suits and some credits.)"""
+    return max((s["scene"]["nsfw_sex"] for s in samples if "scene" in s and a - NEAR <= s["t"] <= b + NEAR), default=0.0)
 
 
 # Sounds, not dialogue: a scene whose transcript is only these has nothing worth keeping.
@@ -195,33 +241,32 @@ DIALOGUE_WORDS = 6   # a sex scene with at least this many real words is blacked
 CUT_MARGIN = 0.05
 
 
-def scene_events(shots: list[dict], categories: set[str], words: list[dict] | None,
+def scene_events(samples: list[dict], cuts: list[float], categories: set[str], words: list[dict] | None,
                  duration: float) -> list[dict]:
     """Plan events for flagged scenes.
 
     Sex scenes with no meaningful dialogue are skipped (cut out); with dialogue, or when there
-    is no transcript, they are blacked out so the conversation stays. Kissing and stripper
-    scenes are blacked out. Scenes that only reached REVIEW_SCORE are listed but not covered.
+    is no transcript, they are blacked out so the conversation stays. Suggestive scenes are
+    blacked out. Scenes that were only possible are listed for review but not covered.
     """
     events = []
     for cat in sorted(categories & set(CATEGORIES)):
-        for sc in find_scenes(shots, cat):
+        for sc in find_scenes(samples, cuts, duration, cat):
             start = round(max(0.0, sc["start"] - CUT_MARGIN), 3)
             end = round(min(duration, sc["end"]), 3)
             ev = {"type": "visual", "groups": [cat], "start": start, "end": end,
-                  "confidence": sc["score"], "unsure": [],
+                  "confidence": round(sc["score"], 3), "unsure": [],
                   "covers": [{"start": start, "end": end, "box": None}]}
             if words is not None:
                 ev["dialogue_words"] = sum(1 for w in words if start <= w["start"] < end
                                            and w["word"].strip(",.!?'\"-").lower() not in FILLER)
+            name = "sex" if cat == "sex" else "suggestive"
             if not sc["sure"]:
                 ev["action"] = "ignore"
-                ev["unsure"].append(f"possible {cat} scene - not covered")
+                ev["unsure"].append(f"possible {name} scene - not covered")
             elif cat == "sex" and words is not None and ev["dialogue_words"] < DIALOGUE_WORDS:
                 ev["action"] = "skip"
             else:
                 ev["action"] = "blackout"
-                if sc["score"] < COVER_SCORE[cat] + 0.15:
-                    ev["unsure"].append(f"low confidence ({sc['score']:.0%})")
             events.append(ev)
     return events

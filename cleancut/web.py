@@ -355,9 +355,10 @@ def reset():
 
 # ---------------------------------------------------------------- review
 
-LABELS = {"nudity": "Nudity", "underwear": "Underwear or swimsuit", "sex": "Sex scene",
-          "kissing": "Intense kissing", "strippers": "Stripper", "faces": "Face (test)"}
-SCENE_GROUPS = set(scenes.CATEGORIES)
+LABELS = {"nudity": "Nudity", "sex": "Sex scene", "suggestive": "Sexually suggestive", "faces": "Face (test)",
+          # from plans made by older versions
+          "underwear": "Underwear or swimsuit", "kissing": "Intense kissing", "strippers": "Stripper"}
+SCENE_GROUPS = set(scenes.CATEGORIES) | {"kissing", "strippers"}
 
 
 def _shown_cover(ev: dict) -> dict:

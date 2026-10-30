@@ -14,15 +14,13 @@ CLASS_GROUPS = {
     "MALE_GENITALIA_EXPOSED": "nudity",
     "BUTTOCKS_EXPOSED": "nudity",
     "ANUS_EXPOSED": "nudity",
-    # NudeNet can't tell underwear from swimwear; these go through review.
-    "FEMALE_BREAST_COVERED": "underwear",
-    "FEMALE_GENITALIA_COVERED": "underwear",
-    "BUTTOCKS_COVERED": "underwear",
+    # NudeNet's *_COVERED classes mean "covered by clothing" (any woman in a shirt), so they
+    # are not used: underwear is judged by the scene check (scenes.py, "suggestive") instead.
     # Only used with --test-faces, to check the pipeline on clean footage.
     "FACE_FEMALE": "faces",
     "FACE_MALE": "faces",
 }
-MIN_SCORE = {"nudity": 0.40, "underwear": 0.55, "faces": 0.40}  # needed to start covering
+MIN_SCORE = {"nudity": 0.40, "faces": 0.40}  # needed to start covering
 KEEP_SCORE = 0.25  # once covering, keep following it down to this score
 
 DETECT_WIDTH = 960
@@ -243,8 +241,6 @@ SURE_SAMPLES = 3     # seen in fewer samples than this = maybe a one-frame false
 def _unsure_reasons(tracks: list[dict]) -> list[str]:
     reasons = []
     groups = {tr["group"] for tr in tracks}
-    if "underwear" in groups and "nudity" not in groups:
-        reasons.append("underwear or swimsuit?")
     best = max(max(tr["scores"]) for tr in tracks)
     if "nudity" in groups and best < SURE_SCORE:
         reasons.append(f"low confidence ({best:.0%})")
