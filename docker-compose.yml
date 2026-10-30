@@ -1,0 +1,20 @@
+# Start:  docker compose up -d --build     then open http://localhost:8800
+# Stop:   docker compose down
+# Settings (movie folder, NVIDIA graphics card or not) are in the .env file next to this one.
+services:
+  cleancut:
+    build: .
+    image: cleancut
+    command: ["serve"]
+    ports:
+      - "127.0.0.1:8800:8800"   # only this computer can open the app
+    volumes:
+      - "${MEDIA_DIR:?Set MEDIA_DIR in the .env file}:/media"
+      - cleancut-models:/models
+    environment:
+      HOST_MEDIA_DIR: "${MEDIA_DIR}"
+    restart: unless-stopped
+
+volumes:
+  cleancut-models:
+    name: cleancut-models   # speech models, downloaded once

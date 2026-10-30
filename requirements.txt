@@ -1,0 +1,8 @@
+faster-whisper==1.1.1
+onnxruntime-gpu==1.20.2
+opencv-python-headless==4.10.0.84
+numpy==1.26.4
+huggingface-hub==0.30.2
+requests==2.32.3
+fastapi==0.115.6
+uvicorn==0.34.0

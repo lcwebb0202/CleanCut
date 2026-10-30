@@ -1,0 +1,4 @@
+*
+!requirements.txt
+!cleancut/
+cleancut/__pycache__

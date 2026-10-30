@@ -1,0 +1,90 @@
+# CleanCut
+
+CleanCut makes a family-friendly copy of a movie, ready for Jellyfin. You give it a movie, tick what you
+want filtered, and it saves a new copy next to the original. It **covers** things instead of skipping
+them, so you still follow the story.
+
+- **Nudity:** covered with a big black box (or a heavy blur), or the whole screen goes black.
+- **Sex scenes:** cut out if nobody is talking. If people are talking, the screen goes black and you still hear them.
+- **Sexually suggestive:** strippers, underwear, intense or erotic kissing. The screen goes black or a box covers it.
+- **Language:** F-word, other strong swears, mild words (d**n, h**l), taking God's name in vain, and slurs,
+  each with its own checkbox. Words are muted (or bleeped, if you like). Subtitles show them as `d**n`.
+- **Review (optional):** before saving, see everything it found as **heavily blurred** pictures,
+  so you can check them without seeing anything graphic. Moments it isn't sure about get a ⚠.
+
+The original movie is never changed. No movie ever leaves your computer.
+
+> It's an AI, so it isn't perfect. It works best on clear, well-lit scenes and can miss things in
+> very dark ones. Use the review screen, and watch a new movie yourself first if it really matters.
+
+## What you need
+
+- A Windows 10 or 11 PC with **about 25 GB of free space** for CleanCut, plus space for the filtered movies.
+- **Docker Desktop** (free): https://www.docker.com/products/docker-desktop/
+- An NVIDIA graphics card makes it several times faster, but it isn't needed.
+
+## Setting it up (once)
+
+1. **Install Docker Desktop.** Download it from the link above and run the installer with the
+   normal settings. Restart your PC if it asks. Open Docker Desktop once and accept its terms.
+2. **Download CleanCut.** On this GitHub page, click the green **Code** button, then **Download ZIP**.
+   Unzip it somewhere *outside* OneDrive, for example `C:\CleanCut`.
+3. **Double-click `Start CleanCut`** in that folder.
+   - The first time, Notepad opens a small settings file. Change the `MEDIA_DIR=` line to your
+     movie folder, using forward slashes, for example `MEDIA_DIR=D:/Movies`. Save and close Notepad.
+   - If you have an **NVIDIA** graphics card, also remove the `#` at the start of the two
+     `COMPOSE_...` lines before saving.
+   - The first start downloads about 13 GB and can take 30 minutes or more. Later starts are quick.
+4. Your browser opens **http://localhost:8800**. That's CleanCut.
+
+CleanCut can only see the movie folder you set (and the folders inside it), and saves there too.
+
+## Using it
+
+1. Start **Docker Desktop**, then open **http://localhost:8800** (or double-click `Start CleanCut`).
+2. Drag a movie onto the page, or click *pick one from your media folder*.
+3. Tick what to filter, choose where to save, and click **Start**.
+4. Wait. A full movie usually takes a few hours (see below), so it's best to run it overnight.
+   You can close the browser; it keeps going.
+5. If you left *review* on, look over the blurred pictures, change anything you want, and click
+   **Save filtered movie**.
+
+The new file is called `Movie Name (Year) - Filtered.mkv`. For Jellyfin, keep it in the same folder as the
+original. If you rename the original to `Movie Name (Year) - Original.mkv`, Jellyfin shows both
+as two versions of the same movie, and you pick which one to play.
+
+### How long it takes
+
+| Computer | 2-hour HD movie | 3-hour 4K movie |
+|---|---|---|
+| With an NVIDIA graphics card (e.g. RTX 3050 laptop) | about 1.5–2 hours | about 5 hours |
+| Without one (processor only) | roughly 6–10 hours | much longer |
+
+### For overnight runs: stop the PC from sleeping
+
+If the PC goes to sleep, CleanCut stops and you have to start that movie again.
+Go to **Settings → System → Power** (or *Power & battery*) → **Screen, sleep & hibernate timeouts**,
+and set **"Put my device to sleep after"** to **Never** while plugged in. Laptops need to be plugged in.
+
+## Stopping and updating
+
+- To stop CleanCut, double-click **`Stop CleanCut`** (or just quit Docker Desktop).
+- To update: download the new ZIP, unzip it over the old folder (keep your `.env` file, which holds
+  your settings), then double-click `Start CleanCut`.
+
+## If something goes wrong
+
+- *"Docker Desktop isn't running":* open Docker Desktop and wait until it says it's running.
+- The page won't open: wait a minute after starting, then refresh. Make sure Docker Desktop is open.
+- Anything else: take a screenshot (including the *Details* section on the page) and send it to Luke.
+
+---
+
+### For the technically curious
+
+A Python app in Docker: Whisper (faster-whisper) finds words; NudeNet finds exposed body parts;
+CLIP (ViT-L/14) recognizes sex/suggestive scenes; ffmpeg does the rest. The command line also works:
+`docker compose run --rm cleancut process "/media/Movie (2020).mkv" --out /media/Filtered`.
+Run `docker compose run --rm cleancut --help` for options.
+
+Built on ideas from PureFrame (MIT), monkeyplug/cleanvid (BSD) and Cens-arr (MIT).

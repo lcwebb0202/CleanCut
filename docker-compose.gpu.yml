@@ -1,0 +1,10 @@
+# Adds an NVIDIA graphics card. Turned on from the .env file (see .env.example).
+services:
+  cleancut:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

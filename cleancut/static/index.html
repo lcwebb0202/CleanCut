@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CleanCut</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232b2f36'/><rect x='8' y='9' width='16' height='14' rx='2' fill='%23f2f2f2'/><rect x='11' y='12' width='10' height='8' fill='%23111'/></svg>">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="logo"></span>CleanCut</div>
+  <div class="sub">Makes a family-friendly copy of a movie for Jellyfin</div>
+</header>
+
+<main>
+  <!-- ============ SETUP ============ -->
+  <section id="setup" hidden>
+    <div class="card">
+      <h2><span class="num">1</span> Choose a movie</h2>
+      <div id="drop" class="drop" tabindex="0">
+        <div class="drop-main">Drag a movie file here</div>
+        <div class="drop-sub">or <button class="link" id="browse-movie">pick one from your media folder</button></div>
+      </div>
+      <div id="movie" class="picked" hidden>
+        <div class="picked-name" id="movie-name"></div>
+        <div class="picked-path" id="movie-path"></div>
+        <button class="link" id="change-movie">Choose a different movie</button>
+      </div>
+      <div id="upload" class="upload" hidden>
+        <div id="upload-text"></div>
+        <div class="bar"><div id="upload-bar"></div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span class="num">2</span> What to filter</h2>
+      <div class="groups">
+        <fieldset>
+          <legend>Nudity and sexual content</legend>
+          <label class="check"><input type="checkbox" name="f" value="nudity"><span>Nudity <em>covered with a big box, or the whole screen goes black</em></span></label>
+          <label class="check"><input type="checkbox" name="f" value="sex"><span>Sex scenes <em>cut out, or blacked out if people are talking</em></span></label>
+          <label class="check"><input type="checkbox" name="f" value="suggestive"><span>Sexually suggestive <em>strippers, underwear, intense or erotic kissing. Underwear may also catch swimsuits, so check those in review</em></span></label>
+        </fieldset>
+        <fieldset>
+          <legend>Language</legend>
+          <label class="check"><input type="checkbox" name="f" value="fword"><span>F-word</span></label>
+          <label class="check"><input type="checkbox" name="f" value="strong"><span>Other strong swears <em>s**t, b***h, a*s…</em></span></label>
+          <label class="check"><input type="checkbox" name="f" value="mild"><span>Mild words <em>d**n, h**l</em></span></label>
+          <label class="check"><input type="checkbox" name="f" value="blasphemy"><span>Taking God's name in vain</span></label>
+          <label class="check"><input type="checkbox" name="f" value="slurs"><span>Slurs</span></label>
+        </fieldset>
+      </div>
+      <div class="options">
+        <div class="opt">
+          <div class="opt-label">Filtered words are</div>
+          <div class="seg" data-name="audio">
+            <button data-v="mute">Muted</button><button data-v="bleep">Bleeped</button>
+          </div>
+        </div>
+        <div class="opt">
+          <div class="opt-label">Nudity is covered with</div>
+          <div class="seg" data-name="cover">
+            <button data-v="box">Black box</button><button data-v="blur">Heavy blur</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2><span class="num">3</span> Where to save it</h2>
+      <div class="row">
+        <div class="grow">
+          <div class="picked-path" id="out-path">Choose a movie first</div>
+          <div class="hint" id="out-name"></div>
+        </div>
+        <button class="btn" id="browse-out">Change folder</button>
+      </div>
+      <label class="check review-toggle"><input type="checkbox" id="review" checked>
+        <span>Let me review what was found before saving <em>blurred previews, nothing graphic</em></span></label>
+    </div>
+
+    <div class="start-row">
+      <div class="error" id="start-error"></div>
+      <button class="btn primary big" id="start" disabled>Start</button>
+    </div>
+  </section>
+
+  <!-- ============ WORKING ============ -->
+  <section id="working" hidden>
+    <div class="card center">
+      <div class="eyebrow" id="w-movie"></div>
+      <h2 id="w-stage">Starting</h2>
+      <div class="bar big"><div id="w-bar"></div></div>
+      <div class="w-meta"><span id="w-pct"></span><span id="w-time"></span></div>
+      <p class="hint">This can take a few hours for a full movie. You can close this page and come back;
+        it keeps going as long as the computer is on and awake.</p>
+      <button class="btn" id="cancel">Cancel</button>
+      <details class="log"><summary>Details</summary><pre id="w-log"></pre></details>
+    </div>
+  </section>
+
+  <!-- ============ REVIEW ============ -->
+  <section id="review-screen" hidden>
+    <div class="card">
+      <div class="review-head">
+        <div>
+          <h2>Review</h2>
+          <div class="hint" id="r-summary"></div>
+        </div>
+        <label class="check inline"><input type="checkbox" id="only-flagged"><span>Show only ⚠ ones to check</span></label>
+      </div>
+      <p class="hint">Previews are heavily blurred. The dashed outline shows where the box will go.
+        If you can't tell what something is, use <b>Less blur</b> one step at a time.</p>
+    </div>
+
+    <div id="r-empty" class="card center hint" hidden>No nudity or scenes were found.</div>
+    <div class="grid" id="r-grid"></div>
+
+    <div class="card" id="r-words-card">
+      <h2>Words</h2>
+      <div class="hint" id="r-words-summary"></div>
+      <div class="words" id="r-words"></div>
+    </div>
+
+    <div class="savebar">
+      <div class="seg small" data-name="r-audio"><button data-v="mute">Mute</button><button data-v="bleep">Bleep</button></div>
+      <div class="seg small" data-name="r-cover"><button data-v="box">Black box</button><button data-v="blur">Heavy blur</button></div>
+      <div class="grow"></div>
+      <button class="btn" id="r-cancel">Discard</button>
+      <button class="btn primary" id="r-save">Save filtered movie</button>
+    </div>
+  </section>
+
+  <!-- ============ DONE / ERROR ============ -->
+  <section id="done" hidden>
+    <div class="card center">
+      <div class="big-icon ok">✓</div>
+      <h2>Finished</h2>
+      <p>Saved as</p>
+      <div class="picked-path" id="d-out"></div>
+      <p class="hint">For Jellyfin, keep it in the same folder as the original movie. If the original is named
+        <code>Title (Year) - Original.mkv</code>, Jellyfin shows both as versions of one movie.</p>
+      <button class="btn primary" id="d-again">Filter another movie</button>
+    </div>
+  </section>
+
+  <section id="failed" hidden>
+    <div class="card center">
+      <div class="big-icon bad" id="f-icon">!</div>
+      <h2 id="f-title">Something went wrong</h2>
+      <p id="f-msg" class="error"></p>
+      <details class="log"><summary>Details</summary><pre id="f-log"></pre></details>
+      <button class="btn primary" id="f-again">Start over</button>
+    </div>
+  </section>
+</main>
+
+<!-- folder / file browser -->
+<dialog id="browser">
+  <div class="dlg-head">
+    <h3 id="b-title">Choose</h3>
+    <button class="x" id="b-close" aria-label="Close">×</button>
+  </div>
+  <div class="crumbs" id="b-crumbs"></div>
+  <ul class="list" id="b-list"></ul>
+  <div class="dlg-foot">
+    <button class="btn" id="b-newfolder">New folder</button>
+    <div class="grow"></div>
+    <button class="btn primary" id="b-use">Use this folder</button>
+  </div>
+</dialog>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
