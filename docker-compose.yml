@@ -13,6 +13,8 @@ services:
       - cleancut-models:/models
     environment:
       HOST_MEDIA_DIR: "${MEDIA_DIR}"
+      PUID: "${PUID:-0}"   # Linux: save files as this user (see .env.example)
+      PGID: "${PGID:-0}"
     restart: unless-stopped
 
 volumes:

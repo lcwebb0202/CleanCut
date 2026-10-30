@@ -42,6 +42,8 @@ RUN mkdir -p /opt/models/clip && cd /opt/models/clip \
       "72ed5c96db5729294468543e4bc75fce14ca63f58e37300290189ba1c1e52b85  tokenizer.json" \
     | sha256sum -c -
 
+COPY entrypoint.sh /app/entrypoint.sh
 COPY cleancut /app/cleancut
+RUN chmod 755 /app/entrypoint.sh
 WORKDIR /app
-ENTRYPOINT ["python3", "-m", "cleancut"]
+ENTRYPOINT ["/app/entrypoint.sh"]

@@ -19,11 +19,11 @@ The original movie is never changed. No movie ever leaves your computer.
 
 ## What you need
 
-- A Windows 10 or 11 PC with **about 25 GB of free space** for CleanCut, plus space for the filtered movies.
-- **Docker Desktop** (free): https://www.docker.com/products/docker-desktop/
+- A **Windows 10/11** or **Linux** PC with **about 25 GB of free space** for CleanCut, plus space for the filtered movies.
+- **Docker**: Docker Desktop on Windows, Docker Engine on Linux (both free; see the steps below).
 - An NVIDIA graphics card makes it several times faster, but it isn't needed.
 
-## Setting it up (once)
+## Setting it up on Windows (once)
 
 1. **Install Docker Desktop.** Download it from the link above and run the installer with the
    normal settings. Restart your PC if it asks. Open Docker Desktop once and accept its terms.
@@ -39,9 +39,39 @@ The original movie is never changed. No movie ever leaves your computer.
 
 CleanCut can only see the movie folder you set (and the folders inside it), and saves there too.
 
+## Setting it up on Linux (once)
+
+1. **Install Docker Engine** (with the Compose plugin) by following the steps for your distribution at
+   https://docs.docker.com/engine/install/. The quick way on most distributions is:
+   ```bash
+   curl -fsSL https://get.docker.com | sudo sh
+   sudo usermod -aG docker $USER
+   ```
+   Then **log out and back in**, so you can use Docker without `sudo`.
+2. **Download CleanCut.** On this GitHub page, click **Code → Download ZIP**, and unzip it, for example
+   to `~/CleanCut`. (Or, with git: `git clone https://github.com/lcwebb0202/CleanCut.git ~/CleanCut`.)
+3. **Start it.** Open a terminal in that folder and run:
+   ```bash
+   bash start-cleancut.sh
+   ```
+   The first time, it asks for your movie folder (for example `/home/yourname/Movies`), and saves
+   your settings in a file called `.env`. The movies CleanCut saves belong to your user, as usual.
+   The first start downloads about 13 GB and can take 30 minutes or more.
+4. Open **http://localhost:8800** in your browser (it tries to open it for you).
+
+CleanCut keeps running in the background and starts again when the computer restarts.
+To stop it: `bash stop-cleancut.sh`.
+
+*NVIDIA graphics card on Linux:* install the
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html),
+then remove the `#` in front of the `COMPOSE_FILE=` line in `.env` and run `bash start-cleancut.sh` again.
+
+*Running Jellyfin on the same Linux PC?* Point `MEDIA_DIR` at your Jellyfin movie folder, so the
+filtered copies land right next to the originals.
+
 ## Using it
 
-1. Start **Docker Desktop**, then open **http://localhost:8800** (or double-click `Start CleanCut`).
+1. Open **http://localhost:8800**. (On Windows, start **Docker Desktop** first, or just double-click `Start CleanCut`.)
 2. Drag a movie onto the page, or click *pick one from your media folder*.
 3. Tick what to filter, choose where to save, and click **Start**.
 4. Wait. A full movie usually takes a few hours (see below), so it's best to run it overnight.
@@ -63,18 +93,23 @@ as two versions of the same movie, and you pick which one to play.
 ### For overnight runs: stop the PC from sleeping
 
 If the PC goes to sleep, CleanCut stops and you have to start that movie again.
-Go to **Settings → System → Power** (or *Power & battery*) → **Screen, sleep & hibernate timeouts**,
-and set **"Put my device to sleep after"** to **Never** while plugged in. Laptops need to be plugged in.
+- **Windows:** go to **Settings → System → Power** (or *Power & battery*) → **Screen, sleep & hibernate timeouts**,
+  and set **"Put my device to sleep after"** to **Never** while plugged in. Laptops need to be plugged in.
+- **Linux:** turn off automatic suspend in your desktop's power settings. Servers usually don't sleep anyway.
 
 ## Stopping and updating
 
-- To stop CleanCut, double-click **`Stop CleanCut`** (or just quit Docker Desktop).
+- To stop CleanCut: on Windows, double-click **`Stop CleanCut`** (or quit Docker Desktop);
+  on Linux, run `bash stop-cleancut.sh`.
 - To update: download the new ZIP, unzip it over the old folder (keep your `.env` file, which holds
-  your settings), then double-click `Start CleanCut`.
+  your settings), then start CleanCut again the usual way. With git on Linux: `git pull`, then
+  `bash start-cleancut.sh`.
 
 ## If something goes wrong
 
-- *"Docker Desktop isn't running":* open Docker Desktop and wait until it says it's running.
+- *"Docker Desktop isn't running"* (Windows): open Docker Desktop and wait until it says it's running.
+- *"Docker isn't running, or your user isn't allowed to use it"* (Linux): run the two commands it
+  shows, then log out and back in.
 - The page won't open: wait a minute after starting, then refresh. Make sure Docker Desktop is open.
 - Anything else: take a screenshot (including the *Details* section on the page) and send it to Luke.
 
