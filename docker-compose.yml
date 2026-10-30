@@ -1,6 +1,6 @@
 # Start:  docker compose up -d --build     then open http://localhost:8800
 # Stop:   docker compose down
-# Settings (movie folder, NVIDIA graphics card or not) are in the .env file next to this one.
+# Settings (movie folder, save folder, NVIDIA graphics card or not) are in the .env file next to this one.
 services:
   cleancut:
     build: .
@@ -10,9 +10,12 @@ services:
       - "127.0.0.1:8800:8800"   # only this computer can open the app
     volumes:
       - "${MEDIA_DIR:?Set MEDIA_DIR in the .env file}:/media"
+      - "${OUTPUT_DIR:-${MEDIA_DIR}}:/output"   # where filtered movies are saved (optional, see .env)
       - cleancut-models:/models
+      - cleancut-work:/work                     # CleanCut's own working files
     environment:
       HOST_MEDIA_DIR: "${MEDIA_DIR}"
+      HOST_OUTPUT_DIR: "${OUTPUT_DIR:-${MEDIA_DIR}}"
       PUID: "${PUID:-0}"   # Linux: save files as this user (see .env.example)
       PGID: "${PGID:-0}"
     restart: unless-stopped
@@ -20,3 +23,5 @@ services:
 volumes:
   cleancut-models:
     name: cleancut-models   # speech models, downloaded once
+  cleancut-work:
+    name: cleancut-work

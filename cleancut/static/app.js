@@ -94,8 +94,16 @@ function initSetup() {
   setSeg("audio", load("audio", "mute"));
   setSeg("cover", load("cover", "box"));
   $("review").checked = load("review", true);
-  outDir = load("outDir", null);
+  outDir = load("outDir2", null);
   updateSetup();
+}
+
+// Where to save: the folder picked last time, else the save folder from the settings
+// (e.g. "CleanCut Edited Media"), else next to the movie.
+function saveDir() {
+  if (outDir) return outDir;
+  if (STATE && STATE.default_out) return STATE.default_out;
+  return movie && { path: movie.dir, shown: movie.shown.split("/").slice(0, -1).join("/") };
 }
 
 function chosenFilters() {
@@ -109,7 +117,7 @@ function updateSetup() {
     $("movie-name").textContent = movie.shown.split("/").pop();
     $("movie-path").textContent = movie.shown;
   }
-  const dir = outDir || (movie && { path: movie.dir, shown: movie.shown.split("/").slice(0, -1).join("/") });
+  const dir = saveDir();
   $("out-path").textContent = dir ? dir.shown : "Choose a movie first";
   if (movie) {
     const stem = movie.shown.split("/").pop().replace(/\.[^.]+$/, "").replace(/ - Original$/i, "");
@@ -174,7 +182,7 @@ $("start").addEventListener("click", async () => {
   const filters = chosenFilters();
   const body = {
     input: movie.path,
-    out_dir: (outDir || { path: movie.dir }).path,
+    out_dir: saveDir().path,
     filters, audio: segValue("audio"), cover: segValue("cover"), review: $("review").checked,
   };
   save("filters2", filters); save("audio", body.audio); save("cover", body.cover); save("review", body.review);
@@ -198,7 +206,7 @@ function openBrowser(mode) {
   browserMode = mode;
   $("b-title").textContent = mode === "file" ? "Choose a movie" : "Choose where to save";
   $("b-use").hidden = $("b-newfolder").hidden = mode !== "folder";
-  const start = mode === "folder" ? (outDir && outDir.path) || (movie && movie.dir) || "" : load("lastDir", "");
+  const start = mode === "folder" ? (saveDir() || { path: "" }).path : load("lastDir2", "");
   $("browser").showModal();
   browseTo(start).catch(() => browseTo(""));
 }
@@ -206,7 +214,8 @@ function openBrowser(mode) {
 async function browseTo(path) {
   const d = await api("/api/browse?path=" + encodeURIComponent(path));
   browserPath = d.path;
-  if (browserMode === "file") save("lastDir", d.path);
+  if (browserMode === "file") save("lastDir2", d.path);
+  $("b-use").disabled = $("b-newfolder").disabled = !d.path;  // the top level lists folders but isn't one itself
   const crumbs = $("b-crumbs");
   crumbs.replaceChildren(d.shown);
   const list = $("b-list");
@@ -236,7 +245,7 @@ async function browseTo(path) {
 $("b-close").addEventListener("click", () => $("browser").close());
 $("b-use").addEventListener("click", () => {
   outDir = { path: browserPath, shown: $("browser").dataset.shown };
-  save("outDir", outDir);
+  save("outDir2", outDir);
   $("browser").close();
   updateSetup();
 });
@@ -420,6 +429,7 @@ async function refresh() {
   const job = STATE.job;
   if (!job) {
     show("setup");
+    updateSetup();
   } else if (job.state === "analyzing" || job.state === "rendering") {
     showWorking(job);
     pollTimer = setTimeout(refresh, 1500);

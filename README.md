@@ -38,6 +38,9 @@ The original movie is never changed. No movie ever leaves your computer.
 4. Your browser opens **http://localhost:8800**. That's CleanCut.
 
 CleanCut can only see the movie folder you set (and the folders inside it), and saves there too.
+If you'd rather keep filtered movies in a separate folder, add a line like
+`OUTPUT_DIR=C:/Users/YourName/Filtered Movies` to the settings file (`.env`) and start CleanCut again.
+It then saves there by default, and you can still pick any folder inside either one each time.
 
 ## Setting it up on Linux (once)
 

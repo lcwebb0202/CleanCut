@@ -25,11 +25,12 @@ from .nudity import HDR_TRANSFERS, TONEMAP
 from .pipeline import ALL_FILTERS, load_plan, output_name, save_plan
 
 MEDIA_ROOT = os.path.realpath(os.environ.get("MEDIA_ROOT", "/media"))
-HOST_MEDIA_DIR = os.environ.get("HOST_MEDIA_DIR", "").rstrip("/\\")
 UPLOAD_DIR = os.path.join(MEDIA_ROOT, "CleanCut Uploads")
+# CleanCut's own working files (plans, transcripts, preview frames) live here, not in the user's folders.
+WORK_ROOT = os.environ.get("WORK_ROOT", "/work")
 VIDEO_EXTS = {".mkv", ".mp4", ".m4v", ".avi", ".mov", ".ts", ".m2ts", ".webm", ".wmv"}
 STATIC = os.path.join(os.path.dirname(__file__), "static")
-JOB_FILE = os.path.join(MEDIA_ROOT, ".cleancut-job.json")  # so a review survives a restart
+JOB_FILE = os.path.join(WORK_ROOT, "job.json")  # so a review survives a restart
 
 # Thumbnail widths in pixels before being blown back up: level 0 is the heaviest blur.
 BLUR_LEVELS = [12, 18, 28, 44, 72]
@@ -41,24 +42,57 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 # ---------------------------------------------------------------- paths
 
-def _real(rel: str) -> str:
-    """Media-relative path -> real path, refusing anything outside the media folder."""
-    path = os.path.realpath(os.path.join(MEDIA_ROOT, rel.lstrip("/\\")))
-    if path != MEDIA_ROOT and not path.startswith(MEDIA_ROOT + os.sep):
-        raise HTTPException(400, "That folder is outside the media folder.")
+# The folders shared with CleanCut. The movie folder is always there; a separate save folder
+# (OUTPUT_DIR in .env) is added when set. The browser sees paths as "<folder name>/sub/file.mkv".
+
+def _roots() -> list[dict]:
+    roots = []
+    for container, host_env in ((MEDIA_ROOT, "HOST_MEDIA_DIR"), (os.environ.get("OUTPUT_ROOT", "/output"), "HOST_OUTPUT_DIR")):
+        host = os.environ.get(host_env, "").rstrip("/\\")
+        if not os.path.isdir(container) or any(r["host"] == host and host for r in roots):
+            continue
+        name = os.path.basename(host) or os.path.basename(container)
+        while any(r["name"] == name for r in roots):
+            name += " (2)"
+        roots.append({"name": name, "path": os.path.realpath(container), "host": host})
+    return roots
+
+
+ROOTS = _roots()
+OUTPUT_HOST = os.environ.get("HOST_OUTPUT_DIR", "").rstrip("/\\")
+DEFAULT_OUT = next((r for r in ROOTS if r["host"] == OUTPUT_HOST and r["path"] != MEDIA_ROOT), None)
+
+
+def _real(vpath: str) -> str:
+    """Browser path ("<folder name>/sub/x.mkv") -> real path, refusing anything outside the shared folders."""
+    parts = vpath.replace("\\", "/").strip("/").split("/", 1)
+    root = next((r for r in ROOTS if r["name"] == parts[0]), None)
+    if root is None:
+        raise HTTPException(400, "That folder isn't one CleanCut can see.")
+    path = os.path.realpath(os.path.join(root["path"], parts[1] if len(parts) > 1 else ""))
+    if path != root["path"] and not path.startswith(root["path"] + os.sep):
+        raise HTTPException(400, "That folder isn't one CleanCut can see.")
     return path
 
 
+def _root_of(path: str) -> dict:
+    return next(r for r in ROOTS if path == r["path"] or path.startswith(r["path"] + os.sep))
+
+
 def _rel(path: str) -> str:
-    return os.path.relpath(path, MEDIA_ROOT).replace(os.sep, "/").lstrip(".")
+    root = _root_of(path)
+    rest = os.path.relpath(path, root["path"]).replace(os.sep, "/")
+    return root["name"] + ("" if rest == "." else "/" + rest)
 
 
 def _show(path: str) -> str:
     """How a path looks on the user's computer (e.g. C:/Users/.../Movies/x.mkv)."""
-    rel = _rel(path)
-    if HOST_MEDIA_DIR:
-        return HOST_MEDIA_DIR + ("/" + rel if rel else "")
-    return path
+    try:
+        root = _root_of(path)
+    except StopIteration:
+        return path
+    rest = os.path.relpath(path, root["path"]).replace(os.sep, "/")
+    return (root["host"] or root["path"]) + ("" if rest == "." else "/" + rest)
 
 
 # ---------------------------------------------------------------- the job
@@ -72,7 +106,7 @@ class Job:
         self.audio = audio
         self.review = review
         stem = os.path.splitext(os.path.basename(input_path))[0]
-        self.workdir = os.path.join(out_dir, ".cleancut-work", stem)
+        self.workdir = os.path.join(WORK_ROOT, stem)
         self.output = os.path.join(out_dir, output_name(input_path))
         self.state = "analyzing"  # analyzing, review, rendering, done, error, cancelled
         self.stage = "Starting"
@@ -203,6 +237,7 @@ def index():
 @app.get("/api/state")
 def state():
     return {"job": JOB.public() if JOB else None, "media_root": _show(MEDIA_ROOT),
+            "default_out": {"path": DEFAULT_OUT["name"], "shown": DEFAULT_OUT["host"] or DEFAULT_OUT["path"]} if DEFAULT_OUT else None,
             "filters": sorted(ALL_FILTERS), "blur_levels": len(BLUR_LEVELS)}
 
 
@@ -210,7 +245,11 @@ def state():
 
 @app.get("/api/browse")
 def browse(path: str = ""):
-    real = _real(path)
+    if not path.strip("/") and len(ROOTS) > 1:
+        # Top level: the shared folders themselves.
+        return {"path": "", "shown": "Your CleanCut folders", "parent": None,
+                "dirs": [r["name"] for r in ROOTS], "files": []}
+    real = _real(path or ROOTS[0]["name"])
     if not os.path.isdir(real):
         raise HTTPException(404, "Folder not found.")
     dirs, files = [], []
@@ -221,23 +260,25 @@ def browse(path: str = ""):
             dirs.append(e.name)
         elif os.path.splitext(e.name)[1].lower() in VIDEO_EXTS and not e.name.endswith(" - Filtered.mkv"):
             files.append({"name": e.name, "size": e.stat().st_size})
-    return {"path": _rel(real), "shown": _show(real), "parent": None if real == MEDIA_ROOT else _rel(os.path.dirname(real)),
-            "dirs": dirs, "files": files}
+    at_root = real == _root_of(real)["path"]
+    parent = ("" if len(ROOTS) > 1 else None) if at_root else _rel(os.path.dirname(real))
+    return {"path": _rel(real), "shown": _show(real), "parent": parent, "dirs": dirs, "files": files}
 
 
 @app.post("/api/find")
 async def find(req: Request):
     """A file was dropped on the page. Browsers don't tell us where it lives, so look for a file
-    with the same name and size in the media folder; that saves copying a huge movie."""
+    with the same name and size in the shared folders; that saves copying a huge movie."""
     body = await req.json()
     name, size = body.get("name", ""), body.get("size", -1)
-    for root, dirs, files in os.walk(MEDIA_ROOT):
-        dirs[:] = [d for d in dirs if not d.startswith(".")]
-        if name in files:
-            path = os.path.join(root, name)
-            if os.path.getsize(path) == size:
-                return {"path": _rel(path), "shown": _show(path), "dir": _rel(root)}
-    raise HTTPException(404, "Not in the media folder.")
+    for r in ROOTS:
+        for root, dirs, files in os.walk(r["path"]):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            if name in files:
+                path = os.path.join(root, name)
+                if os.path.getsize(path) == size:
+                    return {"path": _rel(path), "shown": _show(path), "dir": _rel(root)}
+    raise HTTPException(404, "Not in the shared folders.")
 
 
 @app.put("/api/upload")

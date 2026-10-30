@@ -4,8 +4,8 @@
 set -e
 if [ -n "$PUID" ] && [ "$PUID" != "0" ]; then
   PGID="${PGID:-$PUID}"
-  mkdir -p /models
-  chown -R "$PUID:$PGID" /models 2>/dev/null || true   # the speech-model download cache
+  mkdir -p /models /work
+  chown -R "$PUID:$PGID" /models /work 2>/dev/null || true   # model cache and working files
   export HOME=/tmp
   exec setpriv --reuid="$PUID" --regid="$PGID" --clear-groups python3 -m cleancut "$@"
 fi

@@ -14,6 +14,8 @@ if [ ! -f .env ]; then
   {
     echo "# The folder with your movies. CleanCut can only see (and save to) this folder and the folders inside it."
     echo "MEDIA_DIR=$dir"
+    echo "# Optional: a separate folder for the filtered movies (remove the # and change the path)."
+    echo "# OUTPUT_DIR=/home/$USER/Filtered Movies"
     echo "# Save files as you, not as root."
     echo "PUID=$(id -u)"
     echo "PGID=$(id -g)"
