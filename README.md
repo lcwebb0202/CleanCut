@@ -82,9 +82,26 @@ filtered copies land right next to the originals.
 5. If you left *review* on, look over the blurred pictures, change anything you want, and click
    **Save filtered movie**.
 
-The new file is called `Movie Name (Year) - Filtered.mkv`. For Jellyfin, keep it in the same folder as the
-original. If you rename the original to `Movie Name (Year) - Original.mkv`, Jellyfin shows both
-as two versions of the same movie, and you pick which one to play.
+### The new file and Jellyfin
+
+The new file gets the original's full name plus ` - Clean`, for example
+`Deadpool (2016) [imdbid-tt1431045] - [Bluray-1080p][EAC3 5.1][x264]-hallowed - Clean.mkv`.
+The original is never renamed or changed.
+
+Saved **in the same folder as the original**, Jellyfin shows the two as one movie with two versions:
+the original stays the one that plays by default, and the copy appears in the version menu as **Clean**.
+(Tested on Jellyfin 12.4.) This works when each movie has its own folder and the file name starts with
+the folder name, followed by ` - ` or nothing, which is how Radarr names files by default:
+
+| Works | Shows up as a second movie instead |
+|---|---|
+| `Up (2009)/Up (2009).mkv` | `Cars (2006)/Cars (2006) [Bluray-1080p].mkv` (no ` - ` after the folder name) |
+| `Inception (2010)/Inception (2010) - WEBDL.mkv` | `All Movies/Toy Story (1995) - Bluray-1080p.mkv` (no folder of its own) |
+| `Deadpool (2016)/Deadpool (2016) [imdbid-tt1431045] - [Bluray-1080p]....mkv` | |
+
+CleanCut checks this before you start and shows a yellow note if Jellyfin wouldn't group them.
+Don't rename the original to `... - Original`: Jellyfin sorts version names alphabetically, so
+"Clean" would then come first and become the default.
 
 ### How long it takes
 

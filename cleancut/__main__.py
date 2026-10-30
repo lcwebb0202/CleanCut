@@ -3,7 +3,7 @@ import argparse
 import os
 import sys
 
-from .pipeline import ALL_FILTERS, analyze, load_plan, output_name
+from .pipeline import ALL_FILTERS, analyze, jellyfin_note, load_plan, output_name
 from .render import render
 
 
@@ -13,6 +13,12 @@ def _filters(text: str) -> set[str]:
     if unknown:
         raise argparse.ArgumentTypeError(f"unknown filters {sorted(unknown)}; choose from {sorted(ALL_FILTERS)}")
     return chosen
+
+
+def _note(input_path: str, out_dir: str) -> None:
+    note = jellyfin_note(input_path, out_dir)
+    if note:
+        print("Jellyfin note: " + note)
 
 
 def main(argv=None) -> int:
@@ -57,6 +63,7 @@ def main(argv=None) -> int:
         for key in ("audio", "cover"):
             if getattr(a, key):
                 plan["settings"][key] = getattr(a, key)
+        _note(plan["input"], a.out)
         render(plan, os.path.join(a.out, output_name(plan["input"])))
         return 0
 
@@ -64,6 +71,7 @@ def main(argv=None) -> int:
         a.out, ".cleancut-work", os.path.splitext(os.path.basename(a.input))[0])
     plan = analyze(a.input, workdir, a.filters, a.audio, a.cover, a.sample_fps, a.whisper_model, a.test_faces)
     if a.cmd == "process":
+        _note(a.input, a.out)
         render(plan, os.path.join(a.out, output_name(a.input)))
     return 0
 

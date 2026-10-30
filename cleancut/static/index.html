@@ -73,6 +73,7 @@
         <div class="grow">
           <div class="picked-path" id="out-path">Choose a movie first</div>
           <div class="hint" id="out-name"></div>
+          <div class="note" id="out-note" hidden></div>
         </div>
         <button class="btn" id="browse-out">Change folder</button>
       </div>
@@ -139,8 +140,8 @@
       <h2>Finished</h2>
       <p>Saved as</p>
       <div class="picked-path" id="d-out"></div>
-      <p class="hint">For Jellyfin, keep it in the same folder as the original movie. If the original is named
-        <code>Title (Year) - Original.mkv</code>, Jellyfin shows both as versions of one movie.</p>
+      <p class="hint">In Jellyfin, a copy saved next to the original shows up as a second version of the
+        same movie, labeled <b>Clean</b>. The original stays the one that plays by default.</p>
       <button class="btn primary" id="d-again">Filter another movie</button>
     </div>
   </section>

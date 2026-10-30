@@ -1,6 +1,7 @@
 """Analyze a movie into a plan (what to cover), which render() then applies."""
 import json
 import os
+import re
 from datetime import datetime
 
 from . import language, nudity, scenes
@@ -162,10 +163,40 @@ def load_plan(path: str) -> dict:
         return json.load(f)
 
 
+CLEAN_SUFFIX = " - Clean"
+
+
 def output_name(input_path: str) -> str:
-    """'Movie (2010).mkv' -> 'Movie (2010) - Filtered.mkv' (Jellyfin shows it as a version)."""
+    """'Movie (2010) - Bluray-1080p.mkv' -> 'Movie (2010) - Bluray-1080p - Clean.mkv'.
+
+    The whole original name is kept, so in Jellyfin (12.x, tested) the two group as versions of one
+    movie, the original stays the default (a name sorts before itself plus extra text) and the
+    copy is labeled "Clean". The original file is never renamed."""
     stem = os.path.splitext(os.path.basename(input_path))[0]
-    for suffix in (" - Original", " - original"):
-        if stem.endswith(suffix):
-            stem = stem[: -len(suffix)]
-    return f"{stem} - Filtered.mkv"
+    return f"{stem}{CLEAN_SUFFIX}.mkv"
+
+
+def jellyfin_note(input_path: str, out_dir: str, folder: str | None = None) -> str | None:
+    """A warning if Jellyfin would NOT show the clean copy as a version of the original, else None.
+
+    Jellyfin groups files as versions only inside the movie's own folder, when every file name
+    starts with the folder name and continues with " - " (or nothing). Tested on Jellyfin 12.4:
+    "Up (2009).mkv", "Up (2009) - WEBDL.mkv" and "Deadpool (2016) [imdbid-tt1431045] - ..." group;
+    "Cars (2006) [Bluray-1080p].mkv" or a shared folder of many movies show the copy as a second movie.
+    `folder` is the movie folder's real name when it differs inside Docker (a shared folder is "/media").
+    """
+    movie_dir = os.path.dirname(os.path.abspath(input_path))
+    if os.path.abspath(out_dir) != movie_dir:
+        return ("Saving in a different folder than the movie. Jellyfin will list the clean copy as "
+                "its own movie, not as a version of the original (fine for a separate Clean library).")
+    folder = folder or os.path.basename(movie_dir)
+    stem = os.path.splitext(os.path.basename(input_path))[0]
+    if not stem.lower().startswith(folder.lower()):
+        return (f'The movie\'s file name doesn\'t start with its folder name ("{folder}"), so Jellyfin will '
+                "list the clean copy as a second movie instead of a version. Movies need their own folder, "
+                'named like the file (for example "Movie (2010)/Movie (2010) - Bluray-1080p.mkv").')
+    rest = stem[len(folder):].strip()
+    if rest and not (rest[0] in "-_." or re.match(r"^\[[^\]]*\]\s*-", rest)):
+        return (f'After the folder name, the file name continues with "{rest[:20]}" instead of " - ", so '
+                "Jellyfin will list the clean copy as a second movie instead of a version.")
+    return None

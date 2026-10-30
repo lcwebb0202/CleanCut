@@ -61,6 +61,7 @@ h2 { font-size: 18px; margin: 0 0 12px; display: flex; align-items: center; gap:
 }
 .hint { color: var(--muted); font-size: 14px; }
 .error { color: var(--bad); }
+.note { margin-top: 6px; font-size: 14px; color: var(--warn); background: var(--warn-bg); border-radius: 8px; padding: 6px 10px; }
 .eyebrow { color: var(--muted); font-size: 14px; margin-bottom: 4px; word-break: break-all; }
 .grow { flex: 1; }
 .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }

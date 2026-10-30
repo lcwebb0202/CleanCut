@@ -106,6 +106,17 @@ function saveDir() {
   return movie && { path: movie.dir, shown: movie.shown.split("/").slice(0, -1).join("/") };
 }
 
+// The exact file name, plus a warning when Jellyfin wouldn't show it as a version of the original.
+async function showOutputInfo(input, outPath) {
+  try {
+    const info = await api(`/api/output?input=${encodeURIComponent(input)}&out_dir=${encodeURIComponent(outPath)}`);
+    if (!movie || movie.path !== input || saveDir().path !== outPath) return;  // choice changed meanwhile
+    $("out-name").textContent = "File name: " + info.name;
+    $("out-note").textContent = info.note || "";
+    $("out-note").hidden = !info.note;
+  } catch (e) { /* keep the page usable */ }
+}
+
 function chosenFilters() {
   return [...document.querySelectorAll('input[name="f"]:checked')].map((c) => c.value);
 }
@@ -119,12 +130,9 @@ function updateSetup() {
   }
   const dir = saveDir();
   $("out-path").textContent = dir ? dir.shown : "Choose a movie first";
-  if (movie) {
-    const stem = movie.shown.split("/").pop().replace(/\.[^.]+$/, "").replace(/ - Original$/i, "");
-    $("out-name").textContent = "File name: " + stem + " - Filtered.mkv";
-  } else {
-    $("out-name").textContent = "";
-  }
+  $("out-name").textContent = "";
+  $("out-note").hidden = true;
+  if (movie && dir) showOutputInfo(movie.path, dir.path);
   $("start").disabled = !movie || chosenFilters().length === 0;
 }
 

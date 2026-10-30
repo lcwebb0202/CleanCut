@@ -22,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from . import language, scenes
 from .media import probe
 from .nudity import HDR_TRANSFERS, TONEMAP
-from .pipeline import ALL_FILTERS, load_plan, output_name, save_plan
+from .pipeline import ALL_FILTERS, CLEAN_SUFFIX, jellyfin_note, load_plan, output_name, save_plan
 
 MEDIA_ROOT = os.path.realpath(os.environ.get("MEDIA_ROOT", "/media"))
 UPLOAD_DIR = os.path.join(MEDIA_ROOT, "CleanCut Uploads")
@@ -258,11 +258,19 @@ def browse(path: str = ""):
             continue
         if e.is_dir():
             dirs.append(e.name)
-        elif os.path.splitext(e.name)[1].lower() in VIDEO_EXTS and not e.name.endswith(" - Filtered.mkv"):
+        elif os.path.splitext(e.name)[1].lower() in VIDEO_EXTS and not e.name.endswith((CLEAN_SUFFIX + ".mkv", " - Filtered.mkv")):
             files.append({"name": e.name, "size": e.stat().st_size})
     at_root = real == _root_of(real)["path"]
     parent = ("" if len(ROOTS) > 1 else None) if at_root else _rel(os.path.dirname(real))
     return {"path": _rel(real), "shown": _show(real), "parent": parent, "dirs": dirs, "files": files}
+
+
+@app.get("/api/output")
+def output_info(input: str, out_dir: str):
+    """The file name the clean copy will get, and a note if Jellyfin wouldn't group it with the original."""
+    path, out = _real(input), _real(out_dir)
+    folder = os.path.basename(_show(os.path.dirname(path)).rstrip("/\\"))  # real name, not "media"
+    return {"name": output_name(path), "note": jellyfin_note(path, out, folder)}
 
 
 @app.post("/api/find")
