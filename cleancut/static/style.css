@@ -43,8 +43,7 @@ code { font-size: .9em; background: var(--soft); padding: 1px 5px; border-radius
 
 .top { max-width: 1100px; margin: 0 auto; padding: 22px 16px 6px; }
 .brand { font-size: 22px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
-.logo { width: 26px; height: 22px; border-radius: 5px; background: var(--text); position: relative; }
-.logo::after { content: ""; position: absolute; inset: 6px 7px; background: var(--bg); }
+.logo { width: 34px; height: 34px; color: var(--text); overflow: visible; }
 .sub { color: var(--muted); font-size: 14px; }
 
 main { max-width: 1100px; margin: 0 auto; padding: 10px 16px 120px; }
@@ -126,6 +125,8 @@ legend { font-weight: 600; padding: 0 6px; }
 /* review */
 .review-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .review-head h2 { margin: 0; }
+.section-head { margin: 22px 0 10px; }
+.section-head h3 { margin: 0; font-size: 16px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
 .item { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
 .item.flagged { border-color: var(--warn); }
@@ -139,9 +140,20 @@ legend { font-weight: 600; padding: 0 6px; }
   font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 6px;
 }
 .thumb .flag {
-  position: absolute; right: 8px; top: 8px; background: var(--warn); color: #000;
+  position: absolute; right: 8px; top: 8px; z-index: 2; background: var(--warn); color: #000;
   font-weight: 700; font-size: 13px; padding: 1px 8px; border-radius: 6px;
 }
+.thumb.light { outline: 2px solid var(--warn); outline-offset: -2px; }
+.thumb .light-note {
+  position: absolute; left: 0; right: 0; top: 0; background: var(--warn); color: #000;
+  font-size: 12px; padding: 3px 8px; padding-right: 40px;
+}
+.thumb .frame-nav {
+  position: absolute; left: 50%; top: 8px; transform: translateX(-50%); display: flex; align-items: center; gap: 2px;
+  background: rgba(0,0,0,.72); color: #fff; border-radius: 6px; font-size: 12px;
+}
+.thumb .light-note ~ .frame-nav { top: 30px; }
+.thumb .frame-nav button { background: none; border: 0; color: #fff; font-size: 16px; line-height: 1; padding: 2px 8px; cursor: pointer; }
 .thumb .blur-ctl { position: absolute; right: 8px; bottom: 8px; display: flex; gap: 4px; }
 .thumb .blur-ctl button {
   background: rgba(0,0,0,.72); color: #fff; border: 0; border-radius: 6px; font-size: 12px; padding: 3px 8px; cursor: pointer;
@@ -153,6 +165,7 @@ legend { font-weight: 600; padding: 0 6px; }
 .reasons { margin: 0; padding: 0; list-style: none; }
 .reasons li { background: var(--warn-bg); color: var(--warn); font-size: 13px; border-radius: 6px; padding: 2px 8px; margin: 2px 0; }
 .item .note { color: var(--muted); font-size: 13px; }
+.item .meta { color: var(--muted); font-size: 13px; }
 .item .seg { margin-top: auto; align-self: flex-start; flex-wrap: wrap; }
 
 .words { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px 14px; margin-top: 10px; }

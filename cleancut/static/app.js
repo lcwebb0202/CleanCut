@@ -299,7 +299,7 @@ async function showReview() {
   show("review-screen");
   if (review) return;
   const p = await api("/api/plan");
-  review = { ...p, actions: {}, blur: {} };
+  review = { ...p, actions: {}, blur: {}, frame: {} };
   for (const v of p.visual) review.actions[v.id] = v.action === "box" ? "auto" : v.action;
   for (const w of p.words) review.actions[w.id] = w.action;
   setSeg("r-audio", p.settings.audio);
@@ -307,28 +307,50 @@ async function showReview() {
   renderReview();
 }
 
+// CleanCut planned to cover it, so it's fairly sure. Letting one of these play asks first:
+// a real one slipped through that way once, because the blurred picture looked harmless.
+const isSure = (v) => v.suggested !== "ignore";
+
 function renderReview() {
   const only = $("only-flagged").checked;
-  const grid = $("r-grid");
-  grid.replaceChildren();
+  const sure = $("r-grid-sure"), maybe = $("r-grid-maybe");
+  sure.replaceChildren();
+  maybe.replaceChildren();
   const flagged = review.visual.filter((v) => v.unsure.length).length;
+  const nSure = review.visual.filter(isSure).length;
   $("r-summary").textContent =
     `${review.visual.length} moment${review.visual.length === 1 ? "" : "s"} found` +
     (flagged ? ` · ${flagged} marked ⚠ to check` : "");
   $("r-empty").hidden = review.visual.length > 0;
+  $("r-sure-head").hidden = !nSure;
+  $("r-sure-count").textContent = nSure;
+  $("r-maybe-head").hidden = nSure === review.visual.length;
+  $("r-maybe-count").textContent = review.visual.length - nSure;
   for (const v of review.visual) {
     if (only && !v.unsure.length) continue;
-    grid.append(reviewItem(v));
+    (isSure(v) ? sure : maybe).append(reviewItem(v));
   }
   renderWords();
+}
+
+function setAction(v, val) {
+  const pct = v.confidence != null ? ` (${Math.round(v.confidence * 100)}% sure)` : "";
+  if (val === "ignore" && isSure(v) && review.actions[v.id] !== "ignore" &&
+      !confirm(`CleanCut is fairly sure this is real${pct}, so it planned to cover it.\n\n` +
+               "Let it play uncovered anyway?")) return;
+  review.actions[v.id] = val;
+  renderReview();
 }
 
 function reviewItem(v) {
   const action = review.actions[v.id];
   const level = review.blur[v.id] || 0;
-  const img = el("img", { alt: "Blurred preview", src: `/api/thumb/${v.id}?level=${level}` });
+  const frames = v.frames || [];
+  const fi = Math.min(review.frame[v.id] || 0, Math.max(0, frames.length - 1));
+  const fr = frames[fi] || { t: v.start, box: false };
+  const img = el("img", { alt: "Blurred preview", src: `/api/thumb/${v.id}?level=${level}&f=${fi}` });
   const frame = el("div", { class: "frame" }, img);
-  const thumb = el("div", { class: "thumb" }, frame);
+  const thumb = el("div", { class: "thumb" + (level >= STATE.light_blur ? " light" : "") }, frame);
   img.addEventListener("load", () => {
     // Size the frame to the picture so the box outline lines up with it.
     const r = img.naturalWidth / img.naturalHeight;
@@ -340,21 +362,31 @@ function reviewItem(v) {
   const badge =
     action === "ignore" ? "Allowed - plays normally" :
     action === "skip" ? "Cut out" :
-    action === "blackout" || (v.full && action === "auto") || v.scene ? "Whole screen black" : null;
-  if (action === "auto" && v.box && !v.scene) {
-    const [x0, y0, x1, y1] = v.box;
+    action === "blackout" || (fr.box === null && action === "auto") || v.scene ? "Whole screen black" : null;
+  if (action === "auto" && fr.box && !v.scene) {
+    const [x0, y0, x1, y1] = fr.box;
     frame.append(el("div", { class: "box", style: `left:${x0 * 100}%;top:${y0 * 100}%;width:${(x1 - x0) * 100}%;height:${(y1 - y0) * 100}%` }));
   }
   if (badge) thumb.append(el("div", { class: "badge" }, badge));
   if (v.unsure.length) thumb.append(el("div", { class: "flag", title: "Worth checking" }, "⚠"));
-  const max = STATE.blur_levels - 1;
+  if (level >= STATE.light_blur) {
+    thumb.append(el("div", { class: "light-note" }, "Lightly blurred. Black patches hide what CleanCut detected, but it can miss things."));
+  }
+  if (frames.length > 1) {
+    const go = (d) => { review.frame[v.id] = (fi + d + frames.length) % frames.length; renderReview(); };
+    thumb.append(el("div", { class: "frame-nav" },
+      el("button", { title: "Previous picture", onclick: () => go(-1) }, "‹"),
+      el("span", {}, `${fi + 1}/${frames.length}`),
+      el("button", { title: "Next picture", onclick: () => go(1) }, "›")));
+  }
+  const max = v.max_level ?? STATE.blur_levels - 1;
   thumb.append(el("div", { class: "blur-ctl" },
     el("button", { disabled: level === 0, onclick: () => { review.blur[v.id] = level - 1; renderReview(); } }, "More blur"),
     el("button", { disabled: level >= max, onclick: () => { review.blur[v.id] = level + 1; renderReview(); } }, "Less blur")));
 
   const seg = el("div", { class: "seg small" });
   for (const [val, label] of v.scene ? ACTIONS_SCENE : ACTIONS_BODY) {
-    seg.append(el("button", { class: val === action ? "on" : "", onclick: () => { review.actions[v.id] = val; renderReview(); } }, label));
+    seg.append(el("button", { class: val === action ? "on" : "", onclick: () => setAction(v, val) }, label));
   }
   const notes = [];
   if (v.scene && v.dialogue_words != null) {
@@ -366,6 +398,8 @@ function reviewItem(v) {
     el("div", { class: "item-body" },
       el("div", { class: "item-title" }, v.label,
         el("span", { class: "item-time" }, `${fmtTime(v.start)} · ${fmtLength(v.end - v.start)}`)),
+      el("div", { class: "meta" }, `Picture from ${fmtTime(fr.t)}` +
+        (v.confidence != null ? ` · ${Math.round(v.confidence * 100)}% sure` : "")),
       v.unsure.length ? el("ul", { class: "reasons" }, v.unsure.map((r) => el("li", {}, "⚠ " + r))) : null,
       notes.map((n) => el("div", { class: "note" }, n)),
       seg));
@@ -384,7 +418,8 @@ function renderWords() {
       el("input", { type: "checkbox", checked: on, onchange: (e) => { review.actions[w.id] = e.target.checked ? "censor" : "ignore"; renderWords(); } }),
       el("span", { class: "t" }, fmtTime(w.start)),
       el("span", { class: "w" }, w.word),
-      el("span", { class: "c" }, CATEGORY_NAMES[w.category] || w.category)));
+      el("span", { class: "c", title: w.subtitles ? (w.approx ? "Found in the subtitles; timing taken from them" : "Found with help from the subtitles") : "" },
+        (CATEGORY_NAMES[w.category] || w.category) + (w.subtitles ? " · subs" : ""))));
   }
 }
 

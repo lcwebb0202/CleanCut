@@ -32,8 +32,11 @@ VIDEO_EXTS = {".mkv", ".mp4", ".m4v", ".avi", ".mov", ".ts", ".m2ts", ".webm", "
 STATIC = os.path.join(os.path.dirname(__file__), "static")
 JOB_FILE = os.path.join(WORK_ROOT, "job.json")  # so a review survives a restart
 
-# Thumbnail widths in pixels before being blown back up: level 0 is the heaviest blur.
-BLUR_LEVELS = [12, 18, 28, 44, 72]
+# Thumbnail widths in pixels before being blown back up: level 0 is the heaviest blur. The last
+# two are only lightly blurred, so whatever the detector found is always painted black (HIDE_GROW).
+BLUR_LEVELS = [12, 18, 28, 44, 72, 110, 160]
+LIGHT_BLUR = 5      # levels from here on are "light": the page warns that things can slip through
+HIDE_GROW = 0.6     # black patches are this much bigger than the detection on every side
 THUMB_WIDTH = 320
 
 app = FastAPI()
@@ -238,7 +241,7 @@ def index():
 def state():
     return {"job": JOB.public() if JOB else None, "media_root": _show(MEDIA_ROOT),
             "default_out": {"path": DEFAULT_OUT["name"], "shown": DEFAULT_OUT["host"] or DEFAULT_OUT["path"]} if DEFAULT_OUT else None,
-            "filters": sorted(ALL_FILTERS), "blur_levels": len(BLUR_LEVELS)}
+            "filters": sorted(ALL_FILTERS), "blur_levels": len(BLUR_LEVELS), "light_blur": LIGHT_BLUR}
 
 
 # ---------------------------------------------------------------- choosing files
@@ -375,6 +378,28 @@ def _shown_cover(ev: dict) -> dict:
                key=lambda c: c["end"] - c["start"])
 
 
+def _frames(ev: dict) -> list[dict]:
+    """The preview frames of a moment: [{t, hide}]. Plans from older versions have none, so they
+    get one frame from the middle of the longest cover, with nothing marked to hide."""
+    if ev.get("frames"):
+        return ev["frames"]
+    c = _shown_cover(ev)
+    return [{"t": (c["start"] + c["end"]) / 2, "hide": []}]
+
+
+def _max_level(ev: dict) -> int:
+    """Light blur only for plans that know what to paint black (made by this version or later)."""
+    return len(BLUR_LEVELS) - 1 if ev.get("frames") else LIGHT_BLUR - 1
+
+
+def _cover_at(ev: dict, t: float):
+    """The box covering the picture at time t: a box, None for the whole screen, False for nothing."""
+    for c in ev.get("covers", []):
+        if c["start"] <= t <= c["end"]:
+            return c["box"]
+    return False
+
+
 @app.get("/api/plan")
 def plan():
     job = _job()
@@ -385,16 +410,19 @@ def plan():
     for ev in p["events"]:
         if ev["type"] == "visual":
             scene = bool(set(ev["groups"]) & SCENE_GROUPS)
-            c = _shown_cover(ev)
             visual.append({"id": ev["id"], "label": " + ".join(LABELS.get(g, g) for g in ev["groups"]),
                            "scene": scene, "start": ev["start"], "end": ev["end"], "action": ev["action"],
+                           "suggested": ev.get("suggested", ev["action"]),
                            "unsure": ev.get("unsure", []), "confidence": ev.get("confidence"),
-                           "dialogue_words": ev.get("dialogue_words"), "box": c["box"],
+                           "dialogue_words": ev.get("dialogue_words"),
+                           "frames": [{"t": f["t"], "box": _cover_at(ev, f["t"])} for f in _frames(ev)],
+                           "max_level": _max_level(ev),
                            "full": any(cv["box"] is None for cv in ev.get("covers", [])),
                            "boxes": len(ev.get("covers", []))})
         elif ev["type"] == "language":
             words.append({"id": ev["id"], "word": ev["word"], "category": ev["category"],
-                          "start": ev["start"], "action": ev["action"]})
+                          "start": ev["start"], "action": ev["action"], "approx": ev.get("approx", False),
+                          "subtitles": ev.get("source") == "subtitles"})
     return {"visual": visual, "words": words, "settings": p["settings"],
             "categories": {c: c for c in language.CATEGORIES}}
 
@@ -412,6 +440,7 @@ async def update_plan(req: Request):
     for ev in p["events"]:
         a = actions.get(ev["id"])
         if a in allowed.get(ev["type"], ()):
+            ev.setdefault("suggested", ev["action"])  # what CleanCut proposed, kept for the record
             ev["action"] = a
     for key, options in (("cover", {"box", "blur"}), ("audio", {"mute", "bleep"})):
         if body.get(key) in options:
@@ -434,23 +463,29 @@ def render():
 
 
 @app.get("/api/thumb/{event_id}")
-def thumb(event_id: int, level: int = 0):
-    """A HEAVILY blurred still of a flagged moment. The sharp frame never leaves the server."""
+def thumb(event_id: int, level: int = 0, f: int = 0):
+    """A blurred still of a flagged moment (frame f of its preview frames), with everything the
+    detector found painted black. The sharp frame never leaves the server."""
     job = _job()
     ev = next((e for e in load_plan(job.plan_path)["events"] if e["id"] == event_id), None)
     if ev is None or ev["type"] != "visual":
         raise HTTPException(404)
-    level = max(0, min(level, len(BLUR_LEVELS) - 1))
-    cache = os.path.join(job.workdir, "thumbs", f"{event_id}.npy")
+    level = max(0, min(level, _max_level(ev)))
+    frames = _frames(ev)
+    fr = frames[max(0, min(f, len(frames) - 1))]
+    cache = os.path.join(job.workdir, "thumbs", f"{event_id}_{fr['t']:.3f}.npy")
     if os.path.exists(cache):
         small = np.load(cache)
     else:
-        c = _shown_cover(ev)
-        small = _grab(job.input, (c["start"] + c["end"]) / 2)
+        small = _grab(job.input, fr["t"])
         os.makedirs(os.path.dirname(cache), exist_ok=True)
         np.save(cache, small)
     small = _brighten(small)
     h, w = small.shape[:2]
+    for x0, y0, x1, y1 in fr["hide"]:
+        gx, gy = (x1 - x0) * HIDE_GROW, (y1 - y0) * HIDE_GROW
+        cv2.rectangle(small, (int((x0 - gx) * w), int((y0 - gy) * h)), (int((x1 + gx) * w), int((y1 + gy) * h)),
+                      (0, 0, 0), -1)
     bw = BLUR_LEVELS[level]
     tiny = cv2.resize(small, (bw, max(1, round(bw * h / w))), interpolation=cv2.INTER_AREA)
     img = cv2.resize(tiny, (w, h), interpolation=cv2.INTER_LINEAR)

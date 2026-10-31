@@ -1,10 +1,11 @@
 """Analyze a movie into a plan (what to cover), which render() then applies."""
+import bisect
 import json
 import os
 import re
 from datetime import datetime
 
-from . import language, nudity, scenes
+from . import language, nudity, scenes, subtitles
 from .media import extract_speech_audio, probe
 
 LANGUAGE_FILTERS = set(language.CATEGORIES)
@@ -52,15 +53,19 @@ def analyze(input_path: str, workdir: str, filters: set[str], audio: str = "mute
         log("Step 1/2: listening to speech")
         wav = os.path.join(workdir, "speech.wav")
         extract_speech_audio(info, wav)
-        words = language.transcribe(wav, whisper_model, log=log)
-        os.remove(wav)
-        for w in words:  # the WAV starts at 0; shift to the file's timeline
-            w["start"] = round(w["start"] + info.audio_offset, 3)
-            w["end"] = round(w["end"] + info.audio_offset, 3)
+        # The WAV starts at 0; the listener shifts its times onto the file's timeline.
+        listener = language.Listener(wav, whisper_model, offset=info.audio_offset, log=log)
+        words = listener.transcribe()
         with open(os.path.join(workdir, "transcript.json"), "w") as f:
             json.dump(words, f)
         hits = language.find_hits(words, lang) if lang else []
         log(f"  found {len(hits)} words to censor")
+        if lang:
+            cues = subtitles.dialogue_cues(input_path)
+            if cues:
+                hits += language.subtitle_backup(cues, words, hits, lang, listener, log=log)
+        del listener
+        os.remove(wav)
         plan["events"] += hits
 
     groups = filters & {"nudity"} | ({"faces"} if test_faces else set())
@@ -86,6 +91,7 @@ def analyze(input_path: str, workdir: str, filters: set[str], audio: str = "mute
             log(f"  {ev['groups'][0]} scene {ev['start']:.1f}-{ev['end']:.1f}s, "
                 f"{ev['confidence']:.0%}: {how[ev['action']]}")
         visual = _tidy(visual + found, words)
+        _add_preview_frames(visual, samples)
         covered = [e for e in visual if e["action"] != "ignore"]
         blackouts = sum(c["box"] is None for e in covered for c in e["covers"])
         log(f"  found {len(covered)} moments to cover ({blackouts} full-screen), "
@@ -118,6 +124,36 @@ def _check_body_event(ev: dict, samples: list[dict]) -> bool:
             ev["unsure"] = ["possible - not covered"] + [u for u in ev["unsure"] if u != "very brief"]
         return True
     return False
+
+
+PREVIEW_FRAMES = 3
+
+
+def _add_preview_frames(events: list[dict], samples: list[dict]) -> None:
+    """Pick the frames review shows for each moment: where the detection is strongest (not the
+    moment's start, which is padded early and often still shows the shot before), plus a couple
+    more spread through it. Each keeps the areas to hide in the preview."""
+    times = [s["t"] for s in samples]
+    for ev in events:
+        signals = [scenes.SIGNAL[g] for g in ev["groups"] if g in scenes.SIGNAL]
+
+        def strength(s):
+            body = max((d["score"] for d in s["dets"] if d["group"] in ev["groups"]), default=0.0)
+            scene = max((s["scene"][k] for k in signals), default=0.0) if "scene" in s else 0.0
+            return max(body, scene)
+
+        lo, hi = bisect.bisect_left(times, ev["start"]), bisect.bisect_right(times, ev["end"])
+        cands = sorted(((strength(samples[i]), i) for i in range(lo, hi)), key=lambda c: -c[0])
+        if hi > lo:
+            cands = [c for c in cands if c[0] > 0] or [(0.0, (lo + hi) // 2)]
+        gap = max(1.0, (ev["end"] - ev["start"]) / (PREVIEW_FRAMES + 1))
+        picked: list[int] = []
+        for _, i in cands:
+            if all(abs(times[i] - times[j]) >= gap for j in picked):
+                picked.append(i)
+            if len(picked) == PREVIEW_FRAMES:
+                break
+        ev["frames"] = [{"t": times[i], "hide": samples[i].get("hide", [])} for i in picked]
 
 
 def _overlaps(a: dict, b: dict, slack: float = 0.0) -> bool:

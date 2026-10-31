@@ -5,11 +5,23 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CleanCut</title>
 <link rel="stylesheet" href="/static/style.css">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232b2f36'/><rect x='8' y='9' width='16' height='14' rx='2' fill='%23f2f2f2'/><rect x='11' y='12' width='10' height='8' fill='%23111'/></svg>">
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="logo"></span>CleanCut</div>
+  <div class="brand">
+    <!-- The logo: a C drawn as a dashed cut-out line, with scissors cutting along it. -->
+    <svg class="logo" viewBox="0 0 200 200" aria-hidden="true">
+      <path d="M153.6,55 A70,70 0 1 0 153.6,145 L132.2,127 A42,42 0 1 1 132.2,73 Z" fill="none" stroke="currentColor"
+            stroke-width="9" stroke-dasharray="19 13" stroke-linejoin="round" stroke-linecap="round"/>
+      <g transform="translate(114.6,31.5) rotate(-168) scale(1.5)">
+        <circle cx="-18" cy="-9" r="6.5" fill="var(--bg)" stroke="currentColor" stroke-width="4"/>
+        <circle cx="-18" cy="9" r="6.5" fill="var(--bg)" stroke="currentColor" stroke-width="4"/>
+        <path d="M-12,-6 L21,8 L-6,0 Z M-12,6 L21,-8 L-6,0 Z" fill="currentColor"/>
+      </g>
+    </svg>
+    CleanCut
+  </div>
   <div class="sub">Makes a family-friendly copy of a movie for Jellyfin</div>
 </header>
 
@@ -111,12 +123,22 @@
         </div>
         <label class="check inline"><input type="checkbox" id="only-flagged"><span>Show only ⚠ ones to check</span></label>
       </div>
-      <p class="hint">Previews are heavily blurred. The dashed outline shows where the box will go.
-        If you can't tell what something is, use <b>Less blur</b> one step at a time.</p>
+      <p class="hint">Previews are blurred, and anything CleanCut detected is painted black, even with less blur.
+        The dashed outline shows where the box will go. Each moment has a few pictures (‹ ›), starting with the one
+        CleanCut is most sure about. If you can't tell what something is, use <b>Less blur</b> one step at a time.</p>
     </div>
 
     <div id="r-empty" class="card center hint" hidden>No nudity or scenes were found.</div>
-    <div class="grid" id="r-grid"></div>
+    <div class="section-head" id="r-sure-head">
+      <h3>Will be covered (<span id="r-sure-count"></span>)</h3>
+      <div class="hint">CleanCut is fairly sure about these. They stay covered unless you choose otherwise.</div>
+    </div>
+    <div class="grid" id="r-grid-sure"></div>
+    <div class="section-head" id="r-maybe-head">
+      <h3>Possible, not covered (<span id="r-maybe-count"></span>)</h3>
+      <div class="hint">Usually false alarms. They play normally unless you pick a cover. Skip this part if you like.</div>
+    </div>
+    <div class="grid" id="r-grid-maybe"></div>
 
     <div class="card" id="r-words-card">
       <h2>Words</h2>

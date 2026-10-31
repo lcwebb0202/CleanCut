@@ -76,6 +76,12 @@ KIND_PROMPTS = {
         "a movie studio logo", "film credits on a black background", "text on a screen", "a title card",
         "a cartoon", "a city street", "a landscape", "a room interior", "a dark room", "a black screen",
         "a hospital", "an office", "a laboratory", "a kitchen", "the inside of a car",
+        # Fights fooled it (wrestling and a skin-colored suit look like bodies). Adding these
+        # removed 4 of 6 fight false alarms in Deadpool; every real scene stayed covered.
+        "two people fighting", "a man punching another man", "a woman fighting a man", "a martial arts fight",
+        "people wrestling on the ground", "a man in a metal suit", "a giant chrome man",
+        "a man in a red costume fighting", "a battle in a scrapyard", "a man getting hit", "a man being tortured",
+        "a man strapped to a table", "a man in a hospital bed", "a burned man without a shirt",
     ],
 }
 KINDS = tuple(KIND_PROMPTS)

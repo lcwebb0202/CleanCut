@@ -14,7 +14,10 @@ from .media import MediaInfo, encoder_works, probe, run
 # AC3 (E-AC3 above 5.1) rather than AAC: ffmpeg writes AAC into MKV ~21 ms late, AC3 only ~5 ms.
 AUDIO_BITRATE = {1: "192k", 2: "256k", 6: "640k", 8: "1024k"}
 BLEEP_HZ = 1000
-BLEEP_VOLUME = 2.0  # ffmpeg's sine is 1/8 amplitude, so this peaks around -12 dB
+# ffmpeg's sine is 1/8 amplitude, so 0.8 peaks around -20 dB. It was 2.0 (-12 dB) and played on
+# every speaker of a 5.1 track; the user found that too in-your-face. Now it's quieter and only
+# comes from where the voices are (the center speaker, or both speakers in stereo).
+BLEEP_VOLUME = 0.8
 BLUR_CELLS = 3  # a blurred region is pixelated to about this many blocks across
 
 
@@ -45,6 +48,15 @@ def _between(ranges) -> str:
     return "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in ranges)
 
 
+def _bleep_pan(channels: int, layout: str) -> str:
+    """Route the mono bleep tone to the speakers that carry the dialogue."""
+    if channels == 1:
+        return "aformat=channel_layouts=mono"
+    if channels >= 3 and not layout.startswith(("stereo", "2.", "quad")):  # layouts with a center
+        return f"pan={layout}|FC=c0"  # surround: the center speaker only
+    return f"pan={layout}|FL=c0|FR=c0"
+
+
 def _audio_filter(info: MediaInfo, ranges: list[list[float]], mode: str, skips: list) -> str:
     """Filtergraph (input 1 = original file) that silences or bleeps the given ranges,
     then drops the skipped scenes."""
@@ -60,7 +72,7 @@ def _audio_filter(info: MediaInfo, ranges: list[list[float]], mode: str, skips: 
         graph = (f"{src}volume=volume='1-{hit}':eval=frame[speech];"
                  f"sine=frequency={BLEEP_HZ}:sample_rate={info.audio_rate},"
                  f"volume=volume='{BLEEP_VOLUME}*{hit}':eval=frame,"
-                 f"aformat=channel_layouts={layout}[bleep];"
+                 f"{_bleep_pan(info.audio_channels, layout)}[bleep];"
                  f"[speech][bleep]amix=inputs=2:duration=first,volume=2[clean]")
     if skips:
         # Keep the stream's original start offset so it stays in sync with the video.

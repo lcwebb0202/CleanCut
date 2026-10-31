@@ -9,8 +9,12 @@ them, so you still follow the story.
 - **Sexually suggestive:** strippers, underwear, intense or erotic kissing. The screen goes black or a box covers it.
 - **Language:** F-word, other strong swears, mild words (d**n, h**l), taking God's name in vain, and slurs,
   each with its own checkbox. Words are muted (or bleeped, if you like). Subtitles show them as `d**n`.
-- **Review (optional):** before saving, see everything it found as **heavily blurred** pictures,
-  so you can check them without seeing anything graphic. Moments it isn't sure about get a ⚠.
+  If the movie has text subtitles, CleanCut double-checks against them, which catches lines shouted
+  over loud action that speech recognition misses.
+- **Review (optional):** before saving, see everything it found as **blurred** pictures, with anything
+  it detected painted black, so you can check them without seeing anything graphic. Each moment has a few
+  pictures, starting with the clearest one. Moments it's sure about are listed apart from the "possible"
+  ones, and letting a sure one play asks you first.
 
 The original movie is never changed. No movie ever leaves your computer.
 

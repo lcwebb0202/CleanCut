@@ -20,6 +20,12 @@ CLASS_GROUPS = {
     "FACE_FEMALE": "faces",
     "FACE_MALE": "faces",
 }
+# Kept hidden (painted black) in review previews, even when the user lowers the blur. Low bars
+# (0.2 is the lowest score NudeNet reports):
+# a black patch on a harmless frame costs nothing, a missed one shows the user what they didn't want.
+PREVIEW_HIDE = {"FEMALE_BREAST_EXPOSED": 0.2, "FEMALE_GENITALIA_EXPOSED": 0.2, "MALE_GENITALIA_EXPOSED": 0.2,
+                "BUTTOCKS_EXPOSED": 0.2, "ANUS_EXPOSED": 0.2, "FEMALE_BREAST_COVERED": 0.3,
+                "FEMALE_GENITALIA_COVERED": 0.3, "BUTTOCKS_COVERED": 0.3}
 MIN_SCORE = {"nudity": 0.40, "faces": 0.40}  # needed to start covering
 KEEP_SCORE = 0.25  # once covering, keep following it down to this score
 
@@ -113,11 +119,13 @@ def detect(path: str, width: int, height: int, duration: float, groups: set[str]
            log=print) -> tuple[list[dict], list[float]]:
     """Return (samples, cuts).
 
-    samples: [{t, dets: [{group, cls, score, box: [x0,y0,x1,y1] normalized}], scene?: {category: p}}]
+    samples: [{t, dets: [{group, cls, score, box: [x0,y0,x1,y1] normalized}], hide: [box],
+               scene?: {category: p}}]
     cuts: times of camera cuts.
+    `hide` = areas to keep black in review previews (PREVIEW_HIDE), whatever the filters.
     With scenes, some samples also get CLIP scene scores (2 a second on GPU, 1 on CPU).
     """
-    det = _load_detector(log) if groups else None
+    det = _load_detector(log) if groups or scenes else None
     scene_det, scene_every = None, 0
     if scenes:
         from .scenes import SceneDetector
@@ -131,15 +139,16 @@ def detect(path: str, width: int, height: int, duration: float, groups: set[str]
     last_pct = -5
     for i, (t, frame) in enumerate(sample_frames(path, width, height, sample_fps, hdr, cuts_file)):
         fh, fw = frame.shape[:2]
-        dets = []
+        dets, hide = [], []
         for d in det.detect(frame) if det else []:
+            x, y, bw, bh = d["box"]
+            box = [round(x / fw, 4), round(y / fh, 4), round((x + bw) / fw, 4), round((y + bh) / fh, 4)]
             group = CLASS_GROUPS.get(d["class"])
             if group in groups and d["score"] >= KEEP_SCORE:
-                x, y, bw, bh = d["box"]
-                dets.append({"group": group, "cls": d["class"], "score": round(float(d["score"]), 3),
-                             "box": [round(x / fw, 4), round(y / fh, 4),
-                                     round((x + bw) / fw, 4), round((y + bh) / fh, 4)]})
-        samples.append({"t": round(t, 3), "dets": dets})
+                dets.append({"group": group, "cls": d["class"], "score": round(float(d["score"]), 3), "box": box})
+            if d["score"] >= PREVIEW_HIDE.get(d["class"], 2.0):
+                hide.append(box)
+        samples.append({"t": round(t, 3), "dets": dets, "hide": hide})
         if scene_det and i % scene_every == 0:
             samples[-1]["scene"] = scene_det.score(frame)
         pct = t / max(duration, 1) * 100

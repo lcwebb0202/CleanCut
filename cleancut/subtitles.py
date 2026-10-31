@@ -119,6 +119,36 @@ def clean_ass(text: str, enabled: set[str], timeline: Timeline) -> tuple[str, in
     return "\n".join(out), masked
 
 
+def dialogue_cues(path: str) -> list[tuple[float, float, str]]:
+    """Lines of the film's fullest English (or unlabeled) text subtitle track, as
+    [(start, end, plain text)], for double-checking the speech. Empty if there is none.
+    "Forced" tracks only hold foreign-language bits, so they are skipped."""
+    best: list = []
+    for s in streams(path):
+        lang = s["tags"].get("language", "und").lower()
+        if not s["text"] or lang not in ("eng", "en", "und", "") or s["disposition"].get("forced") \
+                or "forced" in s["tags"].get("title", "").lower():
+            continue
+        try:
+            text = run(["ffmpeg", "-v", "error", "-i", path, "-map", f"0:s:{s['index']}", "-c:s", "srt",
+                        "-f", "srt", "-"]).stdout
+        except Exception:  # noqa: BLE001 - a broken track just isn't used
+            continue
+        cues = []
+        for block in re.split(r"\n\s*\n", text.replace("\r\n", "\n").strip()):
+            lines = block.split("\n")
+            ti = next((i for i, l in enumerate(lines) if "-->" in l), None)
+            if ti is None:
+                continue
+            a, b = (_srt_time(x.split()[0]) for x in lines[ti].split("-->"))
+            body = re.sub(r"<[^>]*>|\{[^}]*\}", "", " ".join(lines[ti + 1:])).strip()
+            if body:
+                cues.append((a, b, body))
+        if len(cues) > len(best):
+            best = cues
+    return best
+
+
 def clean_stream(path: str, stream: dict, out_dir: str, enabled: set[str], timeline: Timeline) -> tuple[str, int]:
     """Extract one text subtitle stream, clean it, and return (cleaned file, words masked)."""
     fmt = TEXT_CODECS[stream["codec"]]
