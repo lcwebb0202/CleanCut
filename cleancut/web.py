@@ -257,7 +257,13 @@ def _job() -> Job:
 
 @app.get("/")
 def index():
-    return FileResponse(os.path.join(STATIC, "index.html"), headers={"Cache-Control": "no-store"})
+    # Each CSS/JS link gets its file's change time in the address, so a browser holding an old copy
+    # has to fetch the new one after an update.
+    with open(os.path.join(STATIC, "index.html"), encoding="utf-8") as f:
+        html = f.read()
+    html = re.sub(r'/static/([\w.-]+\.(?:css|js|svg))"',
+                  lambda m: f'/static/{m[1]}?v={int(os.path.getmtime(os.path.join(STATIC, m[1])))}"', html)
+    return Response(html, media_type="text/html", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/state")
