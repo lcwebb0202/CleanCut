@@ -429,7 +429,7 @@ def plan():
         elif ev["type"] == "language":
             words.append({"id": ev["id"], "word": ev["word"], "category": ev["category"],
                           "start": ev["start"], "action": ev["action"], "approx": ev.get("approx", False),
-                          "subtitles": ev.get("source") == "subtitles"})
+                          "line": ev.get("line", False), "subtitles": ev.get("source") == "subtitles"})
     return {"visual": visual, "words": words, "settings": p["settings"],
             "categories": {c: c for c in language.CATEGORIES}}
 

@@ -64,6 +64,8 @@ def analyze(input_path: str, workdir: str, filters: set[str], audio: str = "mute
             cues = subtitles.dialogue_cues(input_path)
             if cues:
                 hits += language.subtitle_backup(cues, words, hits, lang, listener, log=log)
+            grown = language.extend_tails(hits, words, listener.audio(), listener.RATE, info.audio_offset)
+            log(f"  {grown} mutes made longer to cover the end of the word")
         del listener
         os.remove(wav)
         plan["events"] += hits

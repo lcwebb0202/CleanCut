@@ -51,6 +51,7 @@ def backup(a):
     hits = language.find_hits(words, allc)
     listener = language.Listener(wav, offset=info.audio_offset)
     extra = language.subtitle_backup(subtitles.dialogue_cues(a.movie), words, hits, allc, listener)
+    print(language.extend_tails(hits + extra, words, listener.audio(), listener.RATE, info.audio_offset), "mutes made longer")
     os.remove(wav)
     json.dump(hits + extra, open(a.out, "w"))
 

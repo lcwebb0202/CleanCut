@@ -26,6 +26,11 @@ STRONG, STRONG_SHARE, STRONG_SECONDS = 0.8, 0.4, 3.0        # covered without as
 POSSIBLE, POSSIBLE_SHARE, POSSIBLE_SECONDS = 0.7, 0.3, 1.5  # listed in review, not covered
 SCENE_GAP = 20.0   # seconds between counting shots that still makes them one scene (a sex scene
                    # intercut with calmer shots stays one scene; Oppenheimer 23:00 has 15 s gaps)
+# A covered scene also takes in nearby shots that are only fairly sexual (Deadpool 25:28: a bare
+# backside the strict bar missed between two covered parts of a montage), and covered scenes this
+# close together become one.
+CONTINUE, CONTINUE_SHARE = 0.5, 0.5
+BRIDGE_GAP = 45.0
 NEAR = 2.0         # seconds around a body-part detection to look for agreement
 
 # ---------------------------------------------------------------- frame signals (v2)
@@ -226,12 +231,33 @@ def find_scenes(samples: list[dict], cuts: list[float], duration: float, categor
             sc["score"] = max(sc["score"], float(v.max()))
         else:
             scenes.append({"start": a, "end": b, "strong_s": strong_s, "possible_s": possible * dt, "score": float(v.max())})
-    out = []
     for sc in scenes:
         sc["sure"] = sc["strong_s"] >= STRONG_SECONDS
-        if sc["sure"] or sc["possible_s"] >= POSSIBLE_SECONDS:
-            out.append(sc)
-    return out
+    scenes = [sc for sc in scenes if sc["sure"] or sc["possible_s"] >= POSSIBLE_SECONDS]
+    sure = [sc for sc in scenes if sc["sure"]]
+    if not sure:
+        return scenes
+    weak = [(bounds[i], bounds[i + 1]) for i, vals in per_shot.items()
+            if np.mean(np.array(vals) >= CONTINUE) >= CONTINUE_SHARE]
+    for sc in sure:
+        grew = True
+        while grew:
+            grew = False
+            for a, b in weak:
+                if sc["end"] < b and 0 <= a - sc["end"] <= SCENE_GAP:
+                    sc["end"], grew = b, True
+                if a < sc["start"] and 0 <= sc["start"] - b <= SCENE_GAP:
+                    sc["start"], grew = a, True
+    joined = [sure[0]]
+    for sc in sure[1:]:
+        if sc["start"] - joined[-1]["end"] <= BRIDGE_GAP:
+            prev = joined[-1]
+            prev["end"], prev["score"] = max(prev["end"], sc["end"]), max(prev["score"], sc["score"])
+        else:
+            joined.append(sc)
+    maybe = [sc for sc in scenes if not sc["sure"]
+             and not any(j["start"] <= sc["start"] and sc["end"] <= j["end"] for j in joined)]
+    return sorted(joined + maybe, key=lambda sc: sc["start"])
 
 
 def nsfw_near(samples: list[dict], a: float, b: float) -> float:

@@ -1,4 +1,5 @@
 """Find swear words in the dialogue, with word-level timestamps."""
+import bisect
 import re
 
 import numpy as np
@@ -123,12 +124,17 @@ class Listener:
             self.log(f"  transcribed {seg.end / max(info.duration, 1) * 100:5.1f}%")
         return words
 
-    def relisten(self, a: float, b: float, prompt: str) -> list[dict]:
-        """Words between file times a and b, listening for the given text (a subtitle line).
-        No voice-activity filter here: that is what drops shouted lines over loud action."""
+    def audio(self) -> np.ndarray:
+        """The speech audio, decoded once (16 kHz mono floats)."""
         if self._audio is None:
             from faster_whisper import decode_audio
             self._audio = decode_audio(self.wav_path, sampling_rate=self.RATE)
+        return self._audio
+
+    def relisten(self, a: float, b: float, prompt: str) -> list[dict]:
+        """Words between file times a and b, listening for the given text (a subtitle line).
+        No voice-activity filter here: that is what drops shouted lines over loud action."""
+        self.audio()
         i, j = (max(0, int((t - self.offset) * self.RATE)) for t in (a, b))
         if j - i < self.RATE // 4:
             return []
@@ -175,15 +181,37 @@ def subtitle_offset(cues: list[tuple], words: list[dict]) -> float | None:
     return off if np.mean(np.abs(np.array(diffs) - off) <= 1.0) >= 0.6 else None
 
 
+LINE_SHARE = 1 / 3   # a line (or one speaker's half of it) at least this much swearing is muted whole
+LINE_PAD = 0.15
+
+
+def _mostly_swearing(text: str, toks: list[str], want: list[tuple]) -> bool:
+    """"Motherfucker!", "- Fuck! Fuck!", "- Jiminy! Fuck face!": short shouted lines where
+    Whisper's word times are least reliable (on Deadpool it put a "motherfucker" a second late)."""
+    halves = [h for h in re.split(r"^\s*-\s*|\s-\s", text) if h.strip()]
+    first = 0
+    for half in halves:
+        n = len([t for t in half.split() if normalize(t)])
+        swears = sum(1 for i, _ in want if first <= i < first + n)
+        if swears and swears / max(n, 1) >= LINE_SHARE:
+            return True
+        first += n
+    return False
+
+
 def subtitle_backup(cues: list[tuple], words: list[dict], hits: list[dict], enabled: set[str],
                     listener: "Listener | None", log=print) -> list[dict]:
-    """Extra language events for swears that are in the subtitles but weren't heard."""
+    """Extra language events for swears that are in the subtitles but weren't heard.
+
+    Lines that are mostly swearing are muted whole, from the subtitle timing; the heard words
+    inside them are then removed from `hits` (changed in place), so each line is one review row."""
     off = subtitle_offset(cues, words)
     if off is None:
         log("  subtitles don't line up with the speech, so they weren't used to double-check")
         return []
     found: list[dict] = []
-    relistened = approx = 0
+    used: set[int] = set()  # heard words already counted for a line, so overlapping lines don't share one
+    relistened = approx = whole = 0
     for s, e, text in cues:
         s, e = s + off, e + off
         toks = _tokens(text)
@@ -191,18 +219,36 @@ def subtitle_backup(cues: list[tuple], words: list[dict], hits: list[dict], enab
         if not want:
             continue
 
-        def missing(pool):
-            got = [h for h in pool if s - SUB_SLACK <= h["start"] <= e + SUB_SLACK]
+        if _mostly_swearing(text, toks, want):
+            a, b = max(0.0, s - LINE_PAD), e + LINE_PAD
+            inside = {id(h) for h in hits + found
+                      if min(h["end"], b) - max(h["start"], a) >= 0.5 * (h["end"] - h["start"])}
+            hits[:] = [h for h in hits if id(h) not in inside]
+            found[:] = [h for h in found if id(h) not in inside]
+            found.append({"type": "language", "category": want[0][1],
+                          "word": " ".join(mask(normalize(toks[i])) for i, _ in want),
+                          "start": round(a, 3), "end": round(b, 3), "action": "censor",
+                          "source": "subtitles", "line": True})
+            used.add(id(found[-1]))
+            whole += 1
+            continue
+
+        def missing(pool, need):
+            # Words heard inside the line first, then the ones just around it.
+            got = sorted((h for h in pool if id(h) not in used and s - SUB_SLACK <= h["start"] <= e + SUB_SLACK),
+                         key=lambda h: (not s <= h["start"] <= e, h["start"]))
             out = []
-            for i, c in want:
+            for i, c in need:
                 same = [h for h in got if h["category"] == c]
                 if same:
                     got.remove(same[0])
+                    used.add(id(same[0]))
                 else:
                     out.append((i, c))
             return out
 
-        if not missing(hits + found):
+        need = missing(hits + found, want)
+        if not need:
             continue
         if listener is not None:
             heard = listener.relisten(s - 0.6, e + 0.6, text)
@@ -212,19 +258,71 @@ def subtitle_backup(cues: list[tuple], words: list[dict], hits: list[dict], enab
                     continue
                 h["source"] = "subtitles"
                 found.append(h)
+            need = missing(found, need)
         # Still missing: place the word by where it sits in the line.
         total = max(1, sum(len(t) + 1 for t in toks))
-        for i, c in missing(hits + found):
+        for i, c in need:
             mid = (sum(len(t) + 1 for t in toks[:i]) + len(toks[i]) / 2) / total
             t = s + (e - s) * mid
             found.append({"type": "language", "category": c, "word": mask(normalize(toks[i])),
                           "start": round(max(s, t - APPROX_BEFORE), 3), "end": round(min(e, t + APPROX_AFTER), 3),
                           "action": "censor", "source": "subtitles", "approx": True})
+            used.add(id(found[-1]))
             approx += 1
     if found:
-        log(f"  subtitles caught {len(found)} more words ({relistened} lines listened to again, "
-            f"{approx} placed from subtitle timing)")
+        log(f"  subtitles caught {len(found)} more words ({whole} swearing lines muted whole, "
+            f"{relistened} lines listened to again, {approx} placed from subtitle timing)")
     return found
+
+
+# Whisper often ends a shouted word too soon ("motherfu-" muted, "-cker!" heard), so a word's mute
+# runs on while the audio stays about as loud as the word itself.
+TAIL_MAX = 0.7    # seconds a mute may grow past the word's end
+TAIL_DB = 12.0    # still the word while within this many dB of its loudest moment
+TAIL_GAP = 0.25   # a quieter stretch this long means the word is over
+_FRAME = 0.02
+
+
+def extend_tails(hits: list[dict], words: list[dict], audio: np.ndarray, rate: int, offset: float) -> int:
+    """Lengthen mutes (in place) whose word sounds longer than Whisper said; never into the next
+    heard word. Returns how many grew."""
+    starts = sorted(w["start"] for w in words)
+    n = int(_FRAME * rate)
+
+    def levels(a, b):
+        i, j = max(0, int((a - offset) * rate)), max(0, int((b - offset) * rate))
+        x = audio[i:j]
+        k = len(x) // n
+        if k == 0:
+            return np.zeros(0)
+        x = x[:k * n].reshape(k, n).astype(np.float32)
+        return 10 * np.log10(np.mean(x * x, axis=1) + 1e-10)
+
+    grown = 0
+    for h in hits:
+        if h.get("approx") or h.get("line"):
+            continue
+        end = h["end"] - PAD_AFTER
+        word = levels(h["start"] + PAD_BEFORE, end)
+        if not len(word):
+            continue
+        bar = word.max() - TAIL_DB
+        j = bisect.bisect_left(starts, end - 0.005)
+        limit = min(end + TAIL_MAX, starts[j] - 0.02) if j < len(starts) else end + TAIL_MAX
+        last, quiet = -1, 0
+        for k, v in enumerate(levels(end, limit)):
+            if v >= bar:
+                last, quiet = k, 0
+            else:
+                quiet += 1
+                if quiet * _FRAME >= TAIL_GAP:
+                    break
+        if last >= 0:
+            new = round(end + (last + 1) * _FRAME + PAD_AFTER, 3)
+            if new > h["end"]:
+                h["end"] = new
+                grown += 1
+    return grown
 
 
 def _overlap(a: dict, b: dict) -> bool:

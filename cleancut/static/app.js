@@ -422,8 +422,8 @@ function renderWords() {
       el("input", { type: "checkbox", checked: on, onchange: (e) => { review.actions[w.id] = e.target.checked ? "censor" : "ignore"; renderWords(); } }),
       el("span", { class: "t" }, fmtTime(w.start)),
       el("span", { class: "w" }, w.word),
-      el("span", { class: "c", title: w.subtitles ? (w.approx ? "Found in the subtitles; timing taken from them" : "Found with help from the subtitles") : "" },
-        (CATEGORY_NAMES[w.category] || w.category) + (w.subtitles ? " · subs" : ""))));
+      el("span", { class: "c", title: w.subtitles ? (w.line ? "A line that is mostly swearing: the whole subtitle line is muted" : w.approx ? "Found in the subtitles; timing taken from them" : "Found with help from the subtitles") : "" },
+        (CATEGORY_NAMES[w.category] || w.category) + (w.line ? " · whole line" : w.subtitles ? " · subs" : ""))));
   }
 }
 
