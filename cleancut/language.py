@@ -212,8 +212,15 @@ def subtitle_backup(cues: list[tuple], words: list[dict], hits: list[dict], enab
     found: list[dict] = []
     used: set[int] = set()  # heard words already counted for a line, so overlapping lines don't share one
     relistened = approx = whole = 0
-    for s, e, text in cues:
-        s, e = s + off, e + off
+    spans = [(s + off, e + off) for s, e, _ in cues]
+    span_starts = [a for a, _ in spans]
+
+    def in_other_line(t: float, k: int) -> bool:
+        j = bisect.bisect_right(span_starts, t)
+        return any(spans[m][0] <= t <= spans[m][1] for m in range(max(0, j - 4), j) if m != k)
+
+    for k, (_, _, text) in enumerate(cues):
+        s, e = spans[k]
         toks = _tokens(text)
         want = [(i, c) for i in range(len(toks)) for c in categorize(toks, i)[:1] if c in enabled]
         if not want:
@@ -233,9 +240,14 @@ def subtitle_backup(cues: list[tuple], words: list[dict], hits: list[dict], enab
             whole += 1
             continue
 
-        def missing(pool, need):
-            # Words heard inside the line first, then the ones just around it.
-            got = sorted((h for h in pool if id(h) not in used and s - SUB_SLACK <= h["start"] <= e + SUB_SLACK),
+        def missing(pool, need, own=True):
+            # Words heard inside the line first, then the ones just around it, but not ones inside
+            # another line: Wolf of Wall Street 2:42:25 borrowed the next line's "fucking" and
+            # missed its own. (`own=False`: words just heard again in this line's audio.)
+            def mine(h):
+                t = h["start"]
+                return s <= t <= e or (s - SUB_SLACK <= t <= e + SUB_SLACK and not (own and in_other_line(t, k)))
+            got = sorted((h for h in pool if id(h) not in used and mine(h)),
                          key=lambda h: (not s <= h["start"] <= e, h["start"]))
             out = []
             for i, c in need:
@@ -253,12 +265,18 @@ def subtitle_backup(cues: list[tuple], words: list[dict], hits: list[dict], enab
         if listener is not None:
             heard = listener.relisten(s - 0.6, e + 0.6, text)
             relistened += 1
+            again = []  # heard again on top of a word that is already muted: that one is this line's
             for h in find_hits(heard, enabled):
-                if any(_overlap(h, x) for x in hits + found):
-                    continue
-                h["source"] = "subtitles"
-                found.append(h)
-            need = missing(found, need)
+                if not s <= h["start"] <= e and in_other_line(h["start"], k):
+                    continue  # the next or previous line's word, caught at the edge of the audio
+                same = next((x for x in hits + found if _overlap(h, x)), None)
+                if same is None:
+                    h["source"] = "subtitles"
+                    found.append(h)
+                    again.append(h)
+                elif id(same) not in used:
+                    again.append(same)
+            need = missing(again, need, own=False)
         # Still missing: place the word by where it sits in the line.
         total = max(1, sum(len(t) + 1 for t in toks))
         for i, c in need:

@@ -138,10 +138,12 @@ class Job:
                 d = json.load(f)
         except (OSError, ValueError):
             return None
-        job = cls.__new__(cls)
-        cls.__init__(job, d["input"], d["out_dir"], d["filters"], d["cover"], d["audio"], d["review"])
+        try:
+            job = cls(d["input"], d["out_dir"], d["filters"], d["cover"], d["audio"], d["review"])
+        except (KeyError, TypeError):  # unreadable: start fresh rather than not start at all
+            return None
         for k in cls.SAVED:
-            setattr(job, k, d[k])
+            setattr(job, k, d.get(k, getattr(job, k)))
         if job.state in ("analyzing", "rendering"):
             job.state, job.stage = "error", "Interrupted"
             job.error = "CleanCut was restarted (or the computer slept or shut down) while it was working. Please start again."
@@ -220,7 +222,13 @@ class Job:
     def cancel(self) -> None:
         self.cancelled = True
         if self.proc and self.proc.poll() is None:
-            os.killpg(self.proc.pid, signal.SIGTERM)
+            os.killpg(self.proc.pid, signal.SIGTERM)  # it tidies up its temporary files and exits
+            threading.Timer(20, self._kill, [self.proc]).start()
+
+    @staticmethod
+    def _kill(proc: subprocess.Popen) -> None:
+        if proc.poll() is None:  # still busy after being asked to stop
+            os.killpg(proc.pid, signal.SIGKILL)
 
     @property
     def plan_path(self) -> str:
@@ -308,10 +316,14 @@ async def upload(req: Request, name: str):
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     dest = os.path.join(UPLOAD_DIR, name)
     part = dest + ".part"
-    with open(part, "wb") as f:
-        async for chunk in req.stream():
-            f.write(chunk)
-    os.replace(part, dest)
+    try:
+        with open(part, "wb") as f:
+            async for chunk in req.stream():
+                f.write(chunk)
+        os.replace(part, dest)
+    finally:
+        if os.path.exists(part):  # copying was cut off
+            os.remove(part)
     return {"path": _rel(dest), "shown": _show(dest), "dir": _rel(UPLOAD_DIR)}
 
 
@@ -344,8 +356,9 @@ async def start(req: Request):
             raise HTTPException(400, "Tick at least one filter.")
         if os.path.abspath(os.path.join(out_dir, output_name(input_path))) == os.path.abspath(input_path):
             raise HTTPException(400, "The output would replace the movie itself. Pick another folder.")
-        JOB = Job(input_path, out_dir, filters, body.get("cover", "box"), body.get("audio", "mute"),
-                  bool(body.get("review", True)))
+        cover = body.get("cover") if body.get("cover") in ("box", "blur") else "box"
+        audio = body.get("audio") if body.get("audio") in ("mute", "bleep") else "mute"
+        JOB = Job(input_path, out_dir, filters, cover, audio, bool(body.get("review", True)))
         JOB.save()
         threading.Thread(target=JOB.analyze, daemon=True).start()
     return JOB.public()

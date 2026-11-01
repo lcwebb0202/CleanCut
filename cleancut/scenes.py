@@ -262,7 +262,8 @@ def find_scenes(samples: list[dict], cuts: list[float], duration: float, categor
     for sc in sure[1:]:
         if sc["start"] - joined[-1]["end"] <= BRIDGE_GAP:
             prev = joined[-1]
-            prev["end"], prev["score"] = max(prev["end"], sc["end"]), max(prev["score"], sc["score"])
+            prev["start"], prev["end"] = min(prev["start"], sc["start"]), max(prev["end"], sc["end"])
+            prev["score"] = max(prev["score"], sc["score"])
         else:
             joined.append(sc)
     maybe = [sc for sc in scenes if not sc["sure"]
@@ -283,6 +284,11 @@ DIALOGUE_WORDS = 6   # a sex scene with at least this many real words is blacked
 CUT_MARGIN = 0.05
 
 
+def dialogue_words(words: list[dict], a: float, b: float) -> int:
+    """Real words (not FILLER sounds) spoken between a and b."""
+    return sum(1 for w in words if a <= w["start"] < b and w["word"].strip(",.!?'\"-").lower() not in FILLER)
+
+
 def scene_events(samples: list[dict], cuts: list[float], categories: set[str], words: list[dict] | None,
                  duration: float) -> list[dict]:
     """Plan events for flagged scenes.
@@ -300,8 +306,7 @@ def scene_events(samples: list[dict], cuts: list[float], categories: set[str], w
                   "confidence": round(sc["score"], 3), "unsure": [],
                   "covers": [{"start": start, "end": end, "box": None}]}
             if words is not None:
-                ev["dialogue_words"] = sum(1 for w in words if start <= w["start"] < end
-                                           and w["word"].strip(",.!?'\"-").lower() not in FILLER)
+                ev["dialogue_words"] = dialogue_words(words, start, end)
             name = "sex" if cat == "sex" else "suggestive"
             if not sc["sure"]:
                 ev["action"] = "ignore"

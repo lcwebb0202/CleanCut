@@ -1,6 +1,7 @@
 """Command line: python -m cleancut {process,analyze,render} ..."""
 import argparse
 import os
+import signal
 import sys
 
 from .pipeline import ALL_FILTERS, analyze, jellyfin_note, load_plan, output_name
@@ -53,6 +54,9 @@ def main(argv=None) -> int:
     sp.add_argument("--port", type=int, default=8800)
 
     a = p.parse_args(argv)
+    # Cancel in the web app stops this process with SIGTERM: exit through the normal cleanup (temporary
+    # files, the half-saved movie) instead of dying on the spot.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     if a.cmd == "serve":
         from .web import serve
         print(f"CleanCut is running. Open http://localhost:{a.port} in your browser.", flush=True)

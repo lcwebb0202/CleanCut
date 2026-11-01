@@ -197,7 +197,11 @@ def render(plan: dict, out_path: str, log=print) -> None:
 
     out_dir = os.path.dirname(os.path.abspath(out_path))
     os.makedirs(out_dir, exist_ok=True)
-    tmp = tempfile.mkdtemp(prefix=".cleancut-", dir=out_dir)
+    _remove_leftovers(out_dir)
+    # Written inside a hidden temporary folder and moved into place only when complete, so a
+    # cancelled or failed save never leaves a half movie that Jellyfin would list.
+    tmp = tempfile.mkdtemp(prefix=TMP_PREFIX, dir=out_dir)
+    partial = os.path.join(tmp, "movie.mkv")
     decode = ["ffmpeg", "-v", "error", "-i", info.path, "-map", "0:v:0", "-vf", f"fps={info.fps}",
               "-pix_fmt", info.raw_pix_fmt, "-f", "rawvideo", "-"]
     encode = ["ffmpeg", "-y", "-v", "error",
@@ -245,7 +249,7 @@ def render(plan: dict, out_path: str, log=print) -> None:
         chapters = ["-map_chapters", str(next_input)] if _chapters_file(info.path, timeline, meta) else []
         if chapters:
             encode += ["-i", meta]
-    encode += [*maps, *sub_args, *chapters, "-map_metadata", "1", *_video_codec_args(info), out_path]
+    encode += [*maps, *sub_args, *chapters, "-map_metadata", "1", *_video_codec_args(info), partial]
     cut = sum(b - a for a, b in skips)
     log(f"Rendering {W}x{H} @ {fps:.3f} fps with {encode[encode.index('-c:v') + 1]}, "
         f"{len(covers)} covers, {len(skips)} scenes cut ({cut:.1f} s), {len(word_ranges)} words")
@@ -277,20 +281,50 @@ def render(plan: dict, out_path: str, log=print) -> None:
                 else:
                     for c in active:
                         frame.cover(c[2], style)
-            enc.stdin.write(buf)
+            try:
+                enc.stdin.write(buf)
+            except BrokenPipeError:  # the encoder stopped (disk full, ...): say why below
+                break
             pct = n / total * 100
             if pct - last_pct >= 2:
                 log(f"  rendered {min(pct, 100):5.1f}%")
                 last_pct = pct
-    finally:
         dec.stdout.close()
         dec.wait()
-        enc.stdin.close()
+        try:
+            enc.stdin.close()
+        except BrokenPipeError:
+            pass
         enc.wait()
+        if enc.returncode != 0:
+            raise RuntimeError(_encode_error(enc.returncode, out_dir))
+        if dec.returncode != 0:  # the movie couldn't be read to the end: don't save a shortened copy
+            raise RuntimeError(f"couldn't read the movie to the end (ffmpeg decoder exit code {dec.returncode})")
+        os.replace(partial, out_path)
+    finally:
+        for p in (dec, enc):
+            if p.poll() is None:
+                p.kill()
+            p.wait()
         shutil.rmtree(tmp, ignore_errors=True)
-    if enc.returncode != 0:
-        raise RuntimeError(f"ffmpeg encoder failed with exit code {enc.returncode}")
     log(f"Done: {out_path}")
+
+
+TMP_PREFIX = ".cleancut-"
+
+
+def _remove_leftovers(out_dir: str) -> None:
+    """Temporary folders of saves that were cut off (power cut, crash) still hold a partial movie."""
+    for e in os.scandir(out_dir):
+        if e.is_dir() and e.name.startswith(TMP_PREFIX):
+            shutil.rmtree(e.path, ignore_errors=True)
+
+
+def _encode_error(code: int, out_dir: str) -> str:
+    free = shutil.disk_usage(out_dir).free
+    if free < 2e9:
+        return f"the disk is full ({free / 1e9:.1f} GB free where the movie is saved). Free up space and save again"
+    return f"ffmpeg encoder failed with exit code {code}"
 
 
 def _merge_ranges(ranges):

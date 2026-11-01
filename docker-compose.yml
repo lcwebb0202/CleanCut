@@ -19,6 +19,7 @@ services:
       PUID: "${PUID:-0}"   # Linux: save files as this user (see .env.example)
       PGID: "${PGID:-0}"
     restart: unless-stopped
+    init: true   # tidies up finished helper processes (ffmpeg) after a cancel
 
 volumes:
   cleancut-models:

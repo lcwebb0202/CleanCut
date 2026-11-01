@@ -60,21 +60,23 @@ def analyze(input_path: str, workdir: str, filters: set[str], audio: str = "mute
         log("Step 1/2: listening to speech")
         wav = os.path.join(workdir, "speech.wav")
         extract_speech_audio(info, wav)
-        # The WAV starts at 0; the listener shifts its times onto the file's timeline.
-        listener = language.Listener(wav, whisper_model, offset=info.audio_offset, log=log)
-        words = listener.transcribe()
-        with open(os.path.join(workdir, "transcript.json"), "w") as f:
-            json.dump(words, f)
-        hits = language.find_hits(words, lang) if lang else []
-        log(f"  found {len(hits)} words to censor")
-        if lang:
-            cues = subtitles.dialogue_cues(input_path)
-            if cues:
-                hits += language.subtitle_backup(cues, words, hits, lang, listener, log=log)
-            grown = language.extend_tails(hits, words, listener.audio(), listener.RATE, info.audio_offset)
-            log(f"  {grown} mutes made longer to cover the end of the word")
-        del listener
-        os.remove(wav)
+        try:
+            # The WAV starts at 0; the listener shifts its times onto the file's timeline.
+            listener = language.Listener(wav, whisper_model, offset=info.audio_offset, log=log)
+            words = listener.transcribe()
+            with open(os.path.join(workdir, "transcript.json"), "w") as f:
+                json.dump(words, f)
+            hits = language.find_hits(words, lang) if lang else []
+            log(f"  found {len(hits)} words to censor")
+            if lang:
+                cues = subtitles.dialogue_cues(input_path)
+                if cues:
+                    hits += language.subtitle_backup(cues, words, hits, lang, listener, log=log)
+                grown = language.extend_tails(hits, words, listener.audio(), listener.RATE, info.audio_offset)
+                log(f"  {grown} mutes made longer to cover the end of the word")
+            del listener
+        finally:
+            os.remove(wav)  # a few hundred MB for a full movie
         plan["events"] += hits
 
     groups = filters & {"nudity"} | ({"faces"} if test_faces else set())
@@ -187,8 +189,7 @@ def _tidy(events: list[dict], words: list[dict] | None) -> list[dict]:
             merged.append(dict(ev))
     for m in merged:
         if words is not None:
-            m["dialogue_words"] = sum(1 for w in words if m["start"] <= w["start"] < m["end"]
-                                      and w["word"].strip(",.!?'\"-").lower() not in scenes.FILLER)
+            m["dialogue_words"] = scenes.dialogue_words(words, m["start"], m["end"])
             if m["action"] == "skip" and m["dialogue_words"] >= scenes.DIALOGUE_WORDS:
                 m["action"] = "blackout"
     rest = [e for e in events if e not in covered
@@ -234,8 +235,7 @@ def _promote(events: list[dict], words: list[dict] | None) -> list[dict]:
             if not merged["frames"]:
                 del merged["frames"]
             if words is not None:
-                merged["dialogue_words"] = sum(1 for w in words if a <= w["start"] < b
-                                               and w["word"].strip(",.!?'\"-").lower() not in scenes.FILLER)
+                merged["dialogue_words"] = scenes.dialogue_words(words, a, b)
                 if all(e["action"] == "skip" for e in sc) and merged["dialogue_words"] < scenes.DIALOGUE_WORDS:
                     merged["action"] = "skip"
             out.append(merged)

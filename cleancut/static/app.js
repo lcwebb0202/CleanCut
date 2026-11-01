@@ -337,12 +337,21 @@ function renderReview() {
   renderWords();
 }
 
+// Choices are saved as they're made, so a page refresh or an app update keeps them.
+let keepTimer = null;
+const choices = () => ({ actions: review.actions, audio: segValue("r-audio"), cover: segValue("r-cover") });
+function keepChoices() {
+  clearTimeout(keepTimer);
+  keepTimer = setTimeout(() => api("/api/plan", { method: "POST", body: choices() }).catch(() => { /* saved with the movie */ }), 600);
+}
+
 function setAction(v, val) {
   const pct = v.confidence != null ? ` (${Math.round(v.confidence * 100)}% sure)` : "";
   if (val === "ignore" && isSure(v) && review.actions[v.id] !== "ignore" &&
       !confirm(`CleanCut is fairly sure this is real${pct}, so it planned to cover it.\n\n` +
                "Let it play uncovered anyway?")) return;
   review.actions[v.id] = val;
+  keepChoices();
   renderReview();
 }
 
@@ -393,8 +402,9 @@ function reviewItem(v) {
     seg.append(el("button", { class: val === action ? "on" : "", onclick: () => setAction(v, val) }, label));
   }
   const notes = [];
-  if (v.scene && v.dialogue_words != null) {
-    notes.push(v.dialogue_words >= 6 ? `People talk during it (${v.dialogue_words} words), so it's blacked out instead of cut.` : "No real dialogue, so it's cut out.");
+  if (v.scene && v.suggested === "skip") notes.push("No real dialogue, so it's cut out.");
+  else if (v.scene && v.suggested === "blackout" && v.dialogue_words >= 6) {
+    notes.push(`People talk during it (${v.dialogue_words} words), so it's blacked out instead of cut.`);
   }
   if (!v.scene && v.boxes > 1) notes.push(`${v.boxes} camera shots, each with its own box.`);
   return el("div", { class: "item" + (v.unsure.length ? " flagged" : "") + (action === "ignore" ? " allowed" : "") },
@@ -419,7 +429,7 @@ function renderWords() {
   for (const w of words) {
     const on = review.actions[w.id] === "censor";
     box.append(el("label", { class: "word" + (on ? "" : " allowed") },
-      el("input", { type: "checkbox", checked: on, onchange: (e) => { review.actions[w.id] = e.target.checked ? "censor" : "ignore"; renderWords(); } }),
+      el("input", { type: "checkbox", checked: on, onchange: (e) => { review.actions[w.id] = e.target.checked ? "censor" : "ignore"; keepChoices(); renderWords(); } }),
       el("span", { class: "t" }, fmtTime(w.start)),
       el("span", { class: "w" }, w.word),
       el("span", { class: "c", title: w.subtitles ? (w.line ? "A line that is mostly swearing: the whole subtitle line is muted" : w.approx ? "Found in the subtitles; timing taken from them" : "Found with help from the subtitles") : "" },
@@ -428,12 +438,14 @@ function renderWords() {
 }
 
 $("only-flagged").addEventListener("change", renderReview);
-document.querySelector('.seg[data-name="r-audio"]').addEventListener("change", renderWords);
+document.querySelector('.seg[data-name="r-audio"]').addEventListener("change", () => { keepChoices(); renderWords(); });
+document.querySelector('.seg[data-name="r-cover"]').addEventListener("change", keepChoices);
 
 $("r-save").addEventListener("click", async () => {
   $("r-save").disabled = true;
   try {
-    await api("/api/plan", { method: "POST", body: { actions: review.actions, audio: segValue("r-audio"), cover: segValue("r-cover") } });
+    clearTimeout(keepTimer);
+    await api("/api/plan", { method: "POST", body: choices() });
     await api("/api/render", { method: "POST" });
     review = null;
     await refresh();
