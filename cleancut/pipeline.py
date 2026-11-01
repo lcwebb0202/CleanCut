@@ -23,6 +23,13 @@ BOX_BACKED = 0.50       # ...or this score with NSFW backing of at least BACKING
 BACKING = 0.50
 REVIEW_BACKING = 0.30   # weaker ones are listed in review only with at least this backing
 REVIEW_SCORE = 0.35     # ...and a NudeNet score of at least this
+# Weak detections that come together are real far more often than alone (The Wolf of Wall Street:
+# 9 separate 45-94% moments in one 40 s nude scene, all real). Moments chain up when one starts
+# within CHAIN_GAP of the last (NEXT_TO_SCENE next to a covered scene); a chain with a covered
+# scene, or with at least CHAIN_MIN moments, covers everything in it.
+CHAIN_GAP = 15.0
+NEXT_TO_SCENE = 30.0
+CHAIN_MIN = 3
 
 
 def expand_filters(filters: set[str]) -> set[str]:
@@ -92,7 +99,7 @@ def analyze(input_path: str, workdir: str, filters: set[str], audio: str = "mute
             how = {"skip": "cut out (no dialogue)", "blackout": "blacked out", "ignore": "left for review"}
             log(f"  {ev['groups'][0]} scene {ev['start']:.1f}-{ev['end']:.1f}s, "
                 f"{ev['confidence']:.0%}: {how[ev['action']]}")
-        visual = _tidy(visual + found, words)
+        visual = _promote(_tidy(visual + found, words), words)
         _add_preview_frames(visual, samples)
         covered = [e for e in visual if e["action"] != "ignore"]
         blackouts = sum(c["box"] is None for e in covered for c in e["covers"])
@@ -188,6 +195,57 @@ def _tidy(events: list[dict], words: list[dict] | None) -> list[dict]:
             and not any(m["start"] <= e["start"] and e["end"] <= m["end"] for m in merged)
             and not (e["action"] == "ignore" and set(e["groups"]) & SCENE_FILTERS and any(_overlaps(m, e) for m in merged))]
     return merged + rest
+
+
+def _is_scene(ev: dict) -> bool:
+    return bool(set(ev["groups"]) & SCENE_FILTERS) and all(c["box"] is None for c in ev.get("covers", []))
+
+
+def _promote(events: list[dict], words: list[dict] | None) -> list[dict]:
+    """Cover review-only moments that sit in a chain with others (see CHAIN_GAP). A chain with a
+    scene in it is blacked out from start to end; one of only body-part moments gets its boxes."""
+    events = sorted(events, key=lambda e: e["start"])
+    covered = lambda e: e["action"] != "ignore"
+    chains: list[list[dict]] = []
+    for ev in events:
+        if chains:
+            last = max(chains[-1], key=lambda e: e["end"])
+            near = NEXT_TO_SCENE if any(_is_scene(e) and covered(e) for e in (ev, last)) else CHAIN_GAP
+            if ev["start"] - last["end"] <= near:
+                chains[-1].append(ev)
+                continue
+        chains.append([ev])
+    out: list[dict] = []
+    for chain in chains:
+        has_scene = any(_is_scene(e) and covered(e) for e in chain)
+        if not any(e["action"] == "ignore" for e in chain) or not (has_scene or len(chain) >= CHAIN_MIN):
+            out += chain
+            continue
+        why = "covered: next to a covered scene" if has_scene else f"covered: one of {len(chain)} detections close together"
+        sc = [e for e in chain if _is_scene(e)]
+        if sc:  # the whole chain goes black, body-part moments in it included
+            a, b = min(e["start"] for e in chain), max(e["end"] for e in chain)
+            groups = sorted({g for e in sc for g in e["groups"]}, key=["sex", "suggestive"].index)
+            merged = {"type": "visual", "groups": groups, "start": a, "end": b,
+                      "confidence": max(e["confidence"] for e in sc),
+                      "unsure": [why], "covers": [{"start": a, "end": b, "box": None}], "action": "blackout",
+                      "frames": [f for e in sorted(chain, key=lambda e: (not _is_scene(e), -e["confidence"]))
+                                 for f in e.get("frames", [])][:3]}
+            if not merged["frames"]:
+                del merged["frames"]
+            if words is not None:
+                merged["dialogue_words"] = sum(1 for w in words if a <= w["start"] < b
+                                               and w["word"].strip(",.!?'\"-").lower() not in scenes.FILLER)
+                if all(e["action"] == "skip" for e in sc) and merged["dialogue_words"] < scenes.DIALOGUE_WORDS:
+                    merged["action"] = "skip"
+            out.append(merged)
+            continue
+        for e in chain:
+            if e["action"] == "ignore":
+                e["action"] = "auto"
+                e["unsure"] = [u for u in e["unsure"] if "not covered" not in u] + [why]
+            out.append(e)
+    return sorted(out, key=lambda e: e["start"])
 
 
 def save_plan(plan: dict, path: str) -> None:

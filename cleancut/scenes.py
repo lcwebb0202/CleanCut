@@ -28,6 +28,7 @@ POSSIBLE, POSSIBLE_SHARE, POSSIBLE_SECONDS = 0.7, 0.3, 1.5  # listed in review, 
 # CLEAR_SECONDS of frames >= STRONG anywhere in the scene (The Wolf of Wall Street had several
 # 4-9 s sex scenes at 93-99% that the 3 s rule left for review).
 VERY, VERY_SECONDS, CLEAR_SECONDS = 0.9, 1.0, 2.0
+STEADY, STEADY_SECONDS = 0.8, 1.5   # ...or strong all the way through: average >= STEADY over 1.5 s+
 SCENE_GAP = 20.0   # seconds between counting shots that still makes them one scene (a sex scene
                    # intercut with calmer shots stays one scene; Oppenheimer 23:00 has 15 s gaps)
 # A covered scene also takes in nearby shots that are only fairly sexual (Deadpool 25:28: a bare
@@ -234,12 +235,14 @@ def find_scenes(samples: list[dict], cuts: list[float], duration: float, categor
             sc = scenes[-1]
             sc["end"], sc["strong_s"], sc["possible_s"] = b, sc["strong_s"] + strong_s, sc["possible_s"] + possible * dt
             sc["score"], sc["very"], sc["strong_n"] = max(sc["score"], float(v.max())), sc["very"] + very, sc["strong_n"] + strong
+            sc["sum"], sc["n"] = sc["sum"] + float(v.sum()), sc["n"] + len(v)
         else:
             scenes.append({"start": a, "end": b, "strong_s": strong_s, "possible_s": possible * dt, "score": float(v.max()),
-                           "very": very, "strong_n": strong})
+                           "very": very, "strong_n": strong, "sum": float(v.sum()), "n": len(v)})
     for sc in scenes:
         sc["sure"] = (sc["strong_s"] >= STRONG_SECONDS or sc["very"] * dt >= VERY_SECONDS
-                      or sc["strong_n"] * dt >= CLEAR_SECONDS)
+                      or sc["strong_n"] * dt >= CLEAR_SECONDS
+                      or (sc["n"] * dt >= STEADY_SECONDS and sc["sum"] / sc["n"] >= STEADY))
     scenes = [sc for sc in scenes if sc["sure"] or sc["possible_s"] >= POSSIBLE_SECONDS]
     sure = [sc for sc in scenes if sc["sure"]]
     if not sure:
