@@ -24,6 +24,10 @@ SIGNAL = {"sex": "nsfw_sex", "suggestive": "nsfw_sugg"}
 # a shot counts when enough of its frames pass the bar; nearby counting shots join into a scene.
 STRONG, STRONG_SHARE, STRONG_SECONDS = 0.8, 0.4, 3.0        # covered without asking
 POSSIBLE, POSSIBLE_SHARE, POSSIBLE_SECONDS = 0.7, 0.3, 1.5  # listed in review, not covered
+# Short scenes are covered too when they are very clear: VERY_SECONDS of frames >= VERY, or
+# CLEAR_SECONDS of frames >= STRONG anywhere in the scene (The Wolf of Wall Street had several
+# 4-9 s sex scenes at 93-99% that the 3 s rule left for review).
+VERY, VERY_SECONDS, CLEAR_SECONDS = 0.9, 1.0, 2.0
 SCENE_GAP = 20.0   # seconds between counting shots that still makes them one scene (a sex scene
                    # intercut with calmer shots stays one scene; Oppenheimer 23:00 has 15 s gaps)
 # A covered scene also takes in nearby shots that are only fairly sexual (Deadpool 25:28: a bare
@@ -225,14 +229,17 @@ def find_scenes(samples: list[dict], cuts: list[float], duration: float, categor
             continue
         a, b = bounds[i], bounds[i + 1]
         strong_s = strong * dt if strong / len(v) >= STRONG_SHARE else 0.0
+        very = int((v >= VERY).sum())
         if scenes and a - scenes[-1]["end"] <= SCENE_GAP:
             sc = scenes[-1]
             sc["end"], sc["strong_s"], sc["possible_s"] = b, sc["strong_s"] + strong_s, sc["possible_s"] + possible * dt
-            sc["score"] = max(sc["score"], float(v.max()))
+            sc["score"], sc["very"], sc["strong_n"] = max(sc["score"], float(v.max())), sc["very"] + very, sc["strong_n"] + strong
         else:
-            scenes.append({"start": a, "end": b, "strong_s": strong_s, "possible_s": possible * dt, "score": float(v.max())})
+            scenes.append({"start": a, "end": b, "strong_s": strong_s, "possible_s": possible * dt, "score": float(v.max()),
+                           "very": very, "strong_n": strong})
     for sc in scenes:
-        sc["sure"] = sc["strong_s"] >= STRONG_SECONDS
+        sc["sure"] = (sc["strong_s"] >= STRONG_SECONDS or sc["very"] * dt >= VERY_SECONDS
+                      or sc["strong_n"] * dt >= CLEAR_SECONDS)
     scenes = [sc for sc in scenes if sc["sure"] or sc["possible_s"] >= POSSIBLE_SECONDS]
     sure = [sc for sc in scenes if sc["sure"]]
     if not sure:
