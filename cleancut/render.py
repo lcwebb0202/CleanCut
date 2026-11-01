@@ -1,9 +1,11 @@
 """Write the filtered movie: cover video regions and silence/bleep words."""
 import json
 import os
+import queue
 import shutil
 import subprocess
 import tempfile
+import threading
 
 import cv2
 import numpy as np
@@ -168,6 +170,51 @@ def _read_exact(stream, mv: memoryview) -> bool:
     return True
 
 
+# Frames pass from the decoding ffmpeg through Python to the encoding one. Read one at a time with
+# the default 64 KB pipes, that took twice as long as ffmpeg alone (a 4K minute: 66 s vs 32 s).
+# Bigger pipes plus reading the next frames while this one is written: 36 s, same picture.
+PIPE_SIZE = 1 << 20   # Linux's usual limit for an ordinary user
+READ_AHEAD = 4
+
+
+def _big_pipe(f) -> None:
+    try:
+        import fcntl
+        fcntl.fcntl(f.fileno(), 1031, PIPE_SIZE)  # F_SETPIPE_SZ
+    except (ImportError, OSError):
+        pass  # not Linux, or not allowed: just slower
+
+
+def _frames(stream, frame_bytes: int):
+    """Yield raw frames read by a helper thread. Each buffer is reused once the next few have been
+    taken, so a caller must be done with a frame before asking for the one READ_AHEAD later."""
+    free: queue.Queue = queue.Queue()
+    full: queue.Queue = queue.Queue()
+    for _ in range(READ_AHEAD + 2):
+        free.put(bytearray(frame_bytes))
+    stop = threading.Event()
+
+    def reader():
+        try:
+            while not stop.is_set():
+                buf = free.get()
+                if buf is None or not _read_exact(stream, memoryview(buf)):
+                    break
+                full.put(buf)
+        except (OSError, ValueError):  # the decoder was stopped (cancel, error)
+            pass
+        full.put(None)
+
+    threading.Thread(target=reader, daemon=True).start()
+    try:
+        while (buf := full.get()) is not None:
+            yield buf
+            free.put(buf)
+    finally:
+        stop.set()
+        free.put(None)
+
+
 def render(plan: dict, out_path: str, log=print) -> None:
     info = probe(plan["input"])
     settings = plan["settings"]
@@ -256,14 +303,14 @@ def render(plan: dict, out_path: str, log=print) -> None:
 
     dec = subprocess.Popen(decode, stdout=subprocess.PIPE)
     enc = subprocess.Popen(encode, stdin=subprocess.PIPE)
+    _big_pipe(dec.stdout)
+    _big_pipe(enc.stdin)
     frame_bytes = (W * H + 2 * (W // 2) * (H // 2)) * (2 if info.ten_bit else 1)
-    buf = bytearray(frame_bytes)
-    mv = memoryview(buf)
     total = max(1, int(info.duration * fps))
     n, ci, si, last_pct = 0, 0, 0, -2
     active: list = []
     try:
-        while _read_exact(dec.stdout, mv):
+        for buf in _frames(dec.stdout, frame_bytes):
             t = info.video_offset + n / fps
             n += 1
             while si < len(skips) and skips[si][1] <= t:
