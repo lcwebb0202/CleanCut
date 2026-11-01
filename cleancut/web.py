@@ -197,11 +197,18 @@ class Job:
         try:
             self.state, self.stage, self.pct, self.stage_started = "rendering", "Saving the filtered movie", 0.0, time.time()
             self.save()
+            self.error = ""
             self._run(["render", self.plan_path, "--out", self.out_dir])
             self.state, self.stage, self.pct = "done", "Finished", 100.0
             self.save()
         except Exception as e:  # noqa: BLE001
-            self._fail(e)
+            if self.cancelled or not self.review:
+                self._fail(e)
+            else:
+                # Back to the review, choices kept, so saving can simply be tried again.
+                self.state, self.stage, self.pct = "review", "Ready for review", 100.0
+                self.error = f"Saving didn't work: {e}"
+                self.save()
 
     def _fail(self, e: Exception) -> None:
         if self.cancelled:

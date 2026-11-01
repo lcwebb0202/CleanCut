@@ -45,7 +45,22 @@ def _color_args(info: MediaInfo) -> list[str]:
 
 
 def _between(ranges) -> str:
-    return "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in ranges)
+    """ffmpeg expression that is 1 inside any of the ranges. Overlaps are merged, and the sum is
+    built as a balanced tree: ffmpeg can't read a flat sum of 100 or more terms (a film with 152
+    muted words failed to save), but a balanced one works with thousands."""
+    merged: list[list[float]] = []
+    for a, b in sorted(ranges):
+        if merged and a <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+
+    def tree(rs):
+        if len(rs) == 1:
+            return f"between(t,{rs[0][0]:.3f},{rs[0][1]:.3f})"
+        m = len(rs) // 2
+        return f"({tree(rs[:m])}+{tree(rs[m:])})"
+    return tree(merged) if merged else "0"
 
 
 def _bleep_pan(channels: int, layout: str) -> str:

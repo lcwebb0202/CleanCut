@@ -297,6 +297,10 @@ const CATEGORY_NAMES = { fword: "F-word", strong: "Strong", mild: "Mild", blasph
 
 async function showReview() {
   show("review-screen");
+  const err = STATE.job && STATE.job.error;
+  $("r-error").hidden = !err;
+  $("r-error-msg").textContent = err || "";
+  $("r-error-log").textContent = err ? STATE.job.log.join("\n") : "";
   if (review) return;
   const p = await api("/api/plan");
   review = { ...p, actions: {}, blur: {}, frame: {} };

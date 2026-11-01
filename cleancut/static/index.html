@@ -115,6 +115,13 @@
 
   <!-- ============ REVIEW ============ -->
   <section id="review-screen" hidden>
+    <div class="card error-card" id="r-error" hidden>
+      <h2>Saving didn't work</h2>
+      <p>Your review choices are kept. You can try <b>Save filtered movie</b> again; if it fails again,
+        send Luke a screenshot of this box (including <i>Details</i>).</p>
+      <div class="hint" id="r-error-msg"></div>
+      <details class="log"><summary>Details</summary><pre id="r-error-log"></pre></details>
+    </div>
     <div class="card">
       <div class="review-head">
         <div>
