@@ -39,8 +39,16 @@ LIGHT_BLUR = 5      # levels from here on are "light": the page warns that thing
 HIDE_GROW = 0.6     # black patches are this much bigger than the detection on every side
 THUMB_WIDTH = 320
 
+class _FreshStatic(StaticFiles):
+    """Browsers check for a newer copy every time, so an app update never mixes old CSS/JS with new HTML."""
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
 app = FastAPI()
-app.mount("/static", StaticFiles(directory=STATIC), name="static")
+app.mount("/static", _FreshStatic(directory=STATIC), name="static")
 
 
 # ---------------------------------------------------------------- paths
