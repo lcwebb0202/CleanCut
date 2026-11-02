@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 
 from . import subtitles
-from .media import MediaInfo, encoder_works, probe, run
+from .media import MediaInfo, encoder_works, has_center, probe, run
 
 # AC3 (E-AC3 above 5.1) rather than AAC: ffmpeg writes AAC into MKV ~21 ms late, AC3 only ~5 ms.
 AUDIO_BITRATE = {1: "192k", 2: "256k", 6: "640k", 8: "1024k"}
@@ -21,6 +21,18 @@ BLEEP_HZ = 1000
 # comes from where the voices are (the center speaker, or both speakers in stereo).
 BLEEP_VOLUME = 0.8
 BLUR_CELLS = 3  # a blurred region is pixelated to about this many blocks across
+
+# Surround tracks mute a word on the center speaker only, unless the voice is on other speakers
+# too. Checked per word, in the speech band: other speakers count as carrying the voice when
+# they contain a copy of the center (Deadpool's to-camera lines: 0.9+), are nearly as loud as it,
+# or their loudness rises and falls with the center's syllables (room echo: Jordan's speeches in
+# The Wolf of Wall Street, where Whisper could still make out the swear from the side speakers
+# alone; all 31 such words in Wolf and Deadpool scored >= 0.30, the lowest real one 0.37).
+VOICE_RATE = 16000
+VOICE_COPY = 0.3        # correlation with the center at or above this = the voice is there too
+VOICE_OTHERS_DB = -10   # other speakers within this many dB of the center = can't tell, mute all
+VOICE_ECHO = 0.25       # loudness following the center's syllables this closely = echo, mute all
+VOICE_MARGIN = 0.3      # seconds around the word used for the echo check
 
 
 def _video_codec_args(info: MediaInfo) -> list[str]:
@@ -65,31 +77,129 @@ def _between(ranges) -> str:
     return tree(merged) if merged else "0"
 
 
-def _bleep_pan(channels: int, layout: str) -> str:
+def _bleep_pan(info: MediaInfo, layout: str) -> str:
     """Route the mono bleep tone to the speakers that carry the dialogue."""
-    if channels == 1:
+    if info.audio_channels == 1:
         return "aformat=channel_layouts=mono"
-    if channels >= 3 and not layout.startswith(("stereo", "2.", "quad")):  # layouts with a center
+    if has_center(info):
         return f"pan={layout}|FC=c0"  # surround: the center speaker only
     return f"pan={layout}|FL=c0|FR=c0"
 
 
-def _audio_filter(info: MediaInfo, ranges: list[list[float]], mode: str, skips: list) -> str:
-    """Filtergraph (input 1 = original file) that silences or bleeps the given ranges,
-    then drops the skipped scenes."""
+def _bandpass(x: np.ndarray) -> np.ndarray:
+    """Keep 300-3400 Hz, where speech is (drops bass, rumble and hiss)."""
+    spec = np.fft.rfft(x, axis=0)
+    freq = np.fft.rfftfreq(len(x), 1 / VOICE_RATE)
+    spec[(freq < 300) | (freq > 3400)] = 0
+    return np.fft.irfft(spec, len(x), axis=0)
+
+
+def _loudness(x: np.ndarray) -> np.ndarray:
+    """Log loudness in 20 ms windows every 10 ms."""
+    hop, win = VOICE_RATE // 100, VOICE_RATE // 50
+    c = np.cumsum(np.concatenate([[0.0], x * x]))
+    i = np.arange(0, len(x) - win, hop)
+    return np.log(np.sqrt((c[i + win] - c[i]) / win) + 1e-9)
+
+
+def _echo(center: np.ndarray, others: np.ndarray) -> float:
+    """How closely the other speakers' loudness follows the center's, allowing them to lag up to
+    200 ms (room echo). Music doesn't follow someone's syllables; an echo of the voice does."""
+    ec, eo = _loudness(center), _loudness(others.sum(axis=1))
+    best = -1.0
+    for lag in range(21):
+        u, v = ec[:len(ec) - lag], eo[lag:]
+        if len(u) > 10 and u.std() > 0 and v.std() > 0:
+            best = max(best, float(np.corrcoef(u, v)[0, 1]))
+    return best
+
+
+def _voice_on_others(seg: np.ndarray, lo: int, hi: int) -> bool:
+    """seg: one word with some time either side, all channels (center is channel 2 in every
+    layout that has one); the word itself is seg[lo:hi]."""
+    if hi - lo < VOICE_RATE // 20:  # too short to judge
+        return True
+    bp_all = _bandpass(seg.astype(np.float64))
+    if _echo(bp_all[:, 2], np.delete(bp_all, 2, axis=1)) >= VOICE_ECHO:
+        return True
+    bp = bp_all[lo:hi]
+    center, others = bp[:, 2], np.delete(bp, 2, axis=1)
+    c_norm = np.linalg.norm(center)
+    if c_norm < 1e-6:
+        return True  # nothing on the center: the word must be somewhere else
+    if 20 * np.log10(np.linalg.norm(others.sum(axis=1)) / c_norm + 1e-12) >= VOICE_OTHERS_DB:
+        return True
+    n, lag = len(center), int(0.02 * VOICE_RATE)  # copies can be a few ms off
+    c_spec = np.fft.rfft(center, 2 * n)
+    for k in range(others.shape[1]):
+        o_norm = np.linalg.norm(others[:, k])
+        if o_norm < 1e-9:
+            continue
+        xc = np.fft.irfft(c_spec * np.conj(np.fft.rfft(others[:, k], 2 * n)))
+        if max(np.abs(xc[:lag + 1]).max(), np.abs(xc[-lag:]).max()) / (c_norm * o_norm) >= VOICE_COPY:
+            return True
+    return False
+
+
+def _voice_elsewhere(info: MediaInfo, ranges: list[list[float]]) -> list[bool]:
+    """For each word: True if its voice is (or may be) on speakers other than the center, so it
+    has to be muted everywhere. One pass over the audio; any trouble = True for the rest (safe)."""
+    flags = [True] * len(ranges)
+    ch = info.audio_channels
+    proc = subprocess.Popen(["ffmpeg", "-v", "error", "-i", info.path, "-map", f"0:a:{info.audio_index}",
+                             "-ar", str(VOICE_RATE), "-f", "f32le", "-"], stdout=subprocess.PIPE)
+    buf, pos, done = np.zeros((0, ch), np.float32), 0, False  # pos = sample number of buf[0]
+    margin = int(VOICE_MARGIN * VOICE_RATE)
+    try:
+        for k in sorted(range(len(ranges)), key=lambda k: ranges[k][0]):
+            a, b = (int((t - info.audio_offset) * VOICE_RATE) for t in ranges[k])
+            i, j = max(0, a - margin), b + margin
+            while pos + len(buf) < j and not done:
+                raw = proc.stdout.read(VOICE_RATE * ch * 4 * 10)
+                done = not raw
+                usable = len(raw) // (ch * 4) * ch * 4
+                buf = np.concatenate([buf, np.frombuffer(raw[:usable], np.float32).reshape(-1, ch)])
+            seg = buf[max(0, i - pos):j - pos]
+            flags[k] = _voice_on_others(seg, max(0, a) - i, min(len(seg), b - i))
+            if i > pos:  # ranges come in start order, so nothing before this one is needed again
+                buf, pos = buf[i - pos:], i
+    finally:
+        proc.kill()
+        proc.wait()
+    return flags
+
+
+def _audio_filter(info: MediaInfo, center_only: list, everywhere: list, mode: str, skips: list) -> str:
+    """Filtergraph (input 1 = original file) that silences or bleeps the words, then drops the
+    skipped scenes. center_only words are silenced on the center speaker only (surround tracks,
+    where it carries the dialogue), so music and effects keep playing through them; the others
+    on every speaker. The center is silenced by adding an inverted copy of it during the words,
+    which leaves every other sample exactly as it was."""
     src = f"[1:a:{info.audio_index}]"
+    layout = info.audio_layout if info.audio_layout != "unknown" else "stereo"
+    ranges = center_only + everywhere
     if not ranges:
         graph = f"{src}anull[clean]"
+    elif center_only:
+        hit = f"min(1,{_between(ranges)})"
+        quiet = f"volume=volume='1-min(1,{_between(everywhere)})':eval=frame," if everywhere else ""
+        parts = (f"{src}{quiet}asplit=2[orig][c];"
+                 f"[c]pan={layout}|FC=-1*FC,volume=volume='min(1,{_between(center_only)})':eval=frame[cut];")
+        if mode == "mute":
+            graph = parts + "[orig][cut]amix=inputs=2:duration=first:normalize=0[clean]"
+        else:
+            graph = parts + (f"sine=frequency={BLEEP_HZ}:sample_rate={info.audio_rate},"
+                             f"volume=volume='{BLEEP_VOLUME}*{hit}':eval=frame,{_bleep_pan(info, layout)}[bleep];"
+                             f"[orig][cut][bleep]amix=inputs=3:duration=first:normalize=0[clean]")
     elif mode == "mute":
         graph = f"{src}volume=volume='1-min(1,{_between(ranges)})':eval=frame[clean]"
     else:
         hit = f"min(1,{_between(ranges)})"
-        layout = info.audio_layout if info.audio_layout != "unknown" else "stereo"
         # amix halves both inputs, so the result is doubled back up.
         graph = (f"{src}volume=volume='1-{hit}':eval=frame[speech];"
                  f"sine=frequency={BLEEP_HZ}:sample_rate={info.audio_rate},"
                  f"volume=volume='{BLEEP_VOLUME}*{hit}':eval=frame,"
-                 f"{_bleep_pan(info.audio_channels, layout)}[bleep];"
+                 f"{_bleep_pan(info, layout)}[bleep];"
                  f"[speech][bleep]amix=inputs=2:duration=first,volume=2[clean]")
     if skips:
         # Keep the stream's original start offset so it stays in sync with the video.
@@ -258,8 +368,16 @@ def render(plan: dict, out_path: str, log=print) -> None:
     if info.audio_index is not None:
         if word_ranges or skips:
             script = os.path.join(tmp, "audio.txt")
+            everywhere, center_only = word_ranges, []
+            if word_ranges and has_center(info):
+                log("Checking which words are only on the center speaker")
+                elsewhere = _voice_elsewhere(info, word_ranges)
+                center_only = [r for r, e in zip(word_ranges, elsewhere) if not e]
+                everywhere = [r for r, e in zip(word_ranges, elsewhere) if e]
+                log(f"  {len(center_only)} words muted on the center speaker only (music keeps playing), "
+                    f"{len(everywhere)} on every speaker (the voice is on other speakers too)")
             with open(script, "w") as f:
-                f.write(_audio_filter(info, word_ranges, settings.get("audio", "mute"), skips))
+                f.write(_audio_filter(info, center_only, everywhere, settings.get("audio", "mute"), skips))
             maps += ["-/filter_complex", script, "-map", "[aout]",
                      "-c:a", "ac3" if info.audio_channels <= 6 else "eac3",
                      "-b:a", AUDIO_BITRATE.get(info.audio_channels, "640k")]

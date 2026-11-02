@@ -77,12 +77,21 @@ def probe(path: str) -> MediaInfo:
     return info
 
 
+# Layouts with a center speaker (ffmpeg names). In films that's where the dialogue is.
+CENTER_LAYOUTS = {"3.0", "3.1", "4.0", "4.1", "5.0", "5.0(side)", "5.1", "5.1(side)", "6.0", "6.1", "6.1(back)",
+                  "7.0", "7.0(front)", "7.1", "7.1(wide)", "7.1(wide-side)", "3.1.2", "5.1.2", "5.1.4", "7.1.2",
+                  "7.1.4", "7.2.3", "9.1.4", "hexagonal", "octagonal", "hexadecagonal", "22.2"}
+
+
+def has_center(info: MediaInfo) -> bool:
+    return info.audio_channels >= 3 and info.audio_layout in CENTER_LAYOUTS
+
+
 def extract_speech_audio(info: MediaInfo, wav_path: str) -> None:
     """16 kHz mono WAV of the main audio track, for speech recognition. Surround tracks keep
     only the center speaker, where the dialogue is: with the music and explosions left out,
     Whisper caught 90 instead of 80 of Deadpool's 138 swears."""
-    center = info.audio_channels >= 3 and not info.audio_layout.startswith(("stereo", "2.", "quad", "unknown"))
-    af = ["-af", "pan=mono|c0=FC"] if center else ["-ac", "1"]
+    af = ["-af", "pan=mono|c0=FC"] if has_center(info) else ["-ac", "1"]
     run(["ffmpeg", "-y", "-v", "error", "-i", info.path, "-map", f"0:a:{info.audio_index}",
          *af, "-ar", "16000", "-c:a", "pcm_s16le", wav_path])
 

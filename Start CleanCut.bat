@@ -28,6 +28,9 @@ if errorlevel 1 (
   exit /b 1
 )
 
+rem Keeps the PC awake while CleanCut is waiting or working (runs hidden, also after every sign-in).
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0keep-awake.ps1" -Install >nul 2>&1
+
 echo Opening http://localhost:8800 ...
 timeout /t 3 >nul
 start "" http://localhost:8800

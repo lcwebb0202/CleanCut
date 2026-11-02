@@ -8,7 +8,8 @@ them, so you still follow the story.
 - **Sex scenes:** cut out if nobody is talking. If people are talking, the screen goes black and you still hear them.
 - **Sexually suggestive:** strippers, underwear, intense or erotic kissing. The screen goes black or a box covers it.
 - **Language:** F-word, other strong swears, mild words (d**n, h**l), taking God's name in vain, and slurs,
-  each with its own checkbox. Words are muted (or bleeped, if you like). Subtitles show them as `d**n`.
+  each with its own checkbox. Words are muted (or bleeped, if you like). On surround sound (5.1, 7.1) only the
+  voices are muted, so the music and sound effects keep playing. Subtitles show them as `d**n`.
   If the movie has text subtitles, CleanCut double-checks against them, which catches lines shouted
   over loud action that speech recognition misses.
 - **Review (optional):** before saving, see everything it found as **blurred** pictures, with anything
@@ -114,15 +115,19 @@ Don't rename the original to `... - Original`: Jellyfin sorts version names alph
 
 | Computer | 2-hour HD movie | 3-hour 4K movie |
 |---|---|---|
-| With an NVIDIA graphics card (e.g. RTX 3050 laptop) | about 1.5–2 hours | about 5 hours |
+| With an NVIDIA graphics card (e.g. RTX 3050 laptop) | about 1.5–2 hours | about 4 hours |
 | Without one (processor only) | roughly 6–10 hours | much longer |
 
-### For overnight runs: stop the PC from sleeping
+### For overnight runs: the PC has to stay awake
 
 If the PC goes to sleep while CleanCut is working, it stops and you have to start that movie again.
 If it's asleep at the start time, it starts as soon as the PC wakes up.
-- **Windows:** go to **Settings → System → Power** (or *Power & battery*) → **Screen, sleep & hibernate timeouts**,
-  and set **"Put my device to sleep after"** to **Never** while plugged in. Laptops need to be plugged in.
+- **Windows:** CleanCut keeps the PC awake by itself while a movie is waiting for its start time or being
+  worked on, and lets it sleep normally the rest of the time (the screen can still turn off). This is set
+  up the first time you double-click `Start CleanCut` and then runs hidden every time you sign in.
+  Two things it can't stop: **closing a laptop's lid** (leave it open, or set *"When I close the lid"* to
+  *Do nothing* while plugged in, in Control Panel → Power Options) and running out of battery (plug it in).
+  To turn it off, delete *CleanCut keep-awake* from your Startup folder (press Win+R, type `shell:startup`).
 - **Linux:** turn off automatic suspend in your desktop's power settings. Servers usually don't sleep anyway.
 
 ## Stopping and updating
