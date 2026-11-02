@@ -90,6 +90,8 @@
       <div class="row">
         <div class="grow">
           <div class="picked-path" id="out-path">Choose a movie first</div>
+          <div class="hint"><span id="out-why"></span>
+            <button class="link" id="out-reset" hidden>Use the movie's folder instead</button></div>
           <div class="hint" id="out-name"></div>
           <div class="note" id="out-note" hidden></div>
         </div>
@@ -141,7 +143,10 @@
       </div>
       <ul class="q-list" id="q-list"></ul>
       <div class="q-add">
-        <button class="q-plus" id="q-new" aria-label="New movie">+</button>
+        <button class="q-plus" id="q-new" aria-label="New movie">
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4"
+               stroke-linecap="round"><path d="M12 4v16M4 12h16"/></svg>
+        </button>
         <div>New movie</div>
       </div>
     </div>

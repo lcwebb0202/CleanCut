@@ -6,7 +6,7 @@ let STATE = null;          // last /api/state
 let screen = null;         // "setup" (adding movies), "queue" (the list) or "review"
 let reviewId = null;       // the movie being reviewed
 let movies = [];           // [{path, shown, dir}] chosen to add (media-relative paths)
-let outDir = null;         // {path, shown}
+let outDir = null;         // {path, shown}: a folder picked in step 3, for the movies being added now only
 let pollTimer = null;
 let review = null;         // {visual, words, settings, actions: {id: action}, blur: {id: level}}
 
@@ -95,7 +95,6 @@ function initSetup() {
   document.querySelectorAll('input[name="f"]').forEach((c) => (c.checked = filters.includes(c.value)));
   setSeg("audio", load("audio", "mute"));
   setSeg("cover", load("cover", "box"));
-  outDir = load("outDir2", null);
   resetChoices();
   updateSetup();
 }
@@ -162,13 +161,16 @@ $("start-time").addEventListener("input", updateSetup);
 $("review").addEventListener("change", updateSetup);
 setInterval(() => { if (!$("setup").hidden) updateWhen(); }, 30000);  // keeps "in 5 h 10 min" current
 
-// Where to save: the folder picked last time, else the save folder from the settings
-// (e.g. "CleanCut Edited Media"), else next to the (first) movie.
+// Where to save: next to each movie, in its own folder, unless another folder is picked in step 3.
+// A picked folder is only for the movies being added now; the next ones go back to their own folder
+// (so Jellyfin shows the filtered copy as a version of the original).
 function saveDir() {
   if (outDir) return outDir;
-  if (STATE && STATE.default_out) return STATE.default_out;
+  if (!movies.length) return null;
+  const dirs = new Set(movies.map((m) => m.dir));
+  if (dirs.size > 1) return { path: "", shown: "Next to each movie, in the same folder as it", own: true };
   const m = movies[0];
-  return m && { path: m.dir, shown: m.shown.split("/").slice(0, -1).join("/") };
+  return { path: m.dir, shown: m.shown.split("/").slice(0, -1).join("/"), own: true };
 }
 
 // The exact file name, plus a warning when Jellyfin wouldn't show it as a version of the original.
@@ -202,6 +204,8 @@ function updateSetup() {
       onclick: () => { movies.splice(i, 1); updateSetup(); } }, "×"))));
   const dir = saveDir();
   $("out-path").textContent = dir ? dir.shown : "Choose a movie first";
+  $("out-why").textContent = !dir ? "" : dir.own ? "The same folder as the movie." : "A different folder, just for these movies.";
+  $("out-reset").hidden = !outDir;
   $("out-name").textContent = movies.length > 1 ? `Each is saved as its own name plus " - Filtered".` : "";
   $("out-note").hidden = true;
   if (movies.length === 1 && dir) showOutputInfo(movies[0].path, dir.path);
@@ -268,13 +272,14 @@ $("browse-movie").addEventListener("click", () => openBrowser("file"));
 $("add-more").addEventListener("click", () => openBrowser("file"));
 $("clear-movies").addEventListener("click", () => { movies = []; updateSetup(); });
 $("browse-out").addEventListener("click", () => openBrowser("folder"));
+$("out-reset").addEventListener("click", () => { outDir = null; updateSetup(); });
 $("to-queue").addEventListener("click", () => go("queue"));
 
 $("start").addEventListener("click", async () => {
   const filters = chosenFilters();
   const body = {
     inputs: movies.map((m) => m.path),
-    out_dir: saveDir().path,
+    out_dir: outDir ? outDir.path : "",  // empty: each movie's own folder
     filters, audio: segValue("audio"), cover: segValue("cover"), review: $("review").checked,
     start_at: queueBusy() || $("start-now").checked ? 0 : nextStart().getTime() / 1000,
   };
@@ -284,6 +289,7 @@ $("start").addEventListener("click", async () => {
   try {
     await api("/api/start", { method: "POST", body });
     movies = [];
+    outDir = null;
     resetChoices();
     go("queue");
   } catch (e) {
@@ -305,7 +311,8 @@ function openBrowser(mode) {
   ticked = new Map();
   $("b-title").textContent = mode === "file" ? "Choose movies" : "Choose where to save";
   $("b-newfolder").hidden = mode !== "folder";
-  const start = mode === "folder" ? (saveDir() || { path: "" }).path : load("lastDir2", "");
+  const start = mode === "folder" ? (outDir || (movies[0] && { path: movies[0].dir }) || { path: "" }).path
+                                   : load("lastDir2", "");
   $("browser").showModal();
   browseTo(start).catch(() => browseTo(""));
 }
@@ -364,7 +371,6 @@ $("b-use").addEventListener("click", () => {
     return;
   }
   outDir = { path: browserPath, shown: $("browser").dataset.shown };
-  save("outDir2", outDir);
   $("browser").close();
   updateSetup();
 });
@@ -399,7 +405,12 @@ function queueRow(j, i, items) {
   const lined = j.state === "queued" || j.state === "ready";
   const q = STATE.queue;
   let stage = j.stage, meta = "", pct = 0, cls = j.state;
-  if (running) {
+  if (running && j.paused) {
+    pct = j.pct;
+    stage = "Paused · " + j.stage;
+    meta = (j.pct ? j.pct.toFixed(0) + "% · " : "") + "click Resume to carry on from here";
+    cls += " paused";
+  } else if (running) {
     pct = j.pct;
     meta = [j.pct ? j.pct.toFixed(0) + "%" : "", timeLeft(j)].filter(Boolean).join(" · ");
   } else if (lined && q.waiting) {
@@ -424,6 +435,8 @@ function queueRow(j, i, items) {
   if (j.state === "review") buttons.push(btn("Review", () => go("review", j.id), { class: "btn small primary" }));
   if (j.state === "error" || j.state === "cancelled") buttons.push(btn("Try again", () => itemAction(j.id, "retry")));
   if (running) {
+    buttons.push(j.paused ? btn("Resume", () => itemAction(j.id, "resume"), { class: "btn small primary" })
+                          : btn("Pause", () => itemAction(j.id, "pause")));
     buttons.push(btn("Cancel", () => itemAction(j.id, "cancel",
       `Stop working on "${j.input_name}"? Nothing is saved for it${items.some((x) => x.state === "queued" || x.state === "ready") ? ", and the next movie starts" : ""}.`)));
   }

@@ -159,6 +159,7 @@ class Job:
         self.stage_started = 0.0
         self.proc: subprocess.Popen | None = None
         self.cancelled = False
+        self.paused_at = 0.0  # when Pause was clicked; 0 = not paused (not saved: a restart starts it again)
 
     SAVED = ("id", "input", "out_dir", "filters", "cover", "audio", "review", "workdir", "output", "state", "stage",
              "pct", "log", "error", "failed_in", "restarts", "added", "started")
@@ -195,6 +196,7 @@ class Job:
                 "error": self.error, "input": _show(self.input), "input_name": os.path.basename(self.input),
                 "output": _show(self.output), "out_dir": _show(self.out_dir), "filters": self.filters,
                 "cover": self.cover, "audio": self.audio, "review": self.review, "failed_in": self.failed_in,
+                "paused": bool(self.paused_at),
                 "elapsed": round(now - self.started) if self.started else 0,
                 "stage_elapsed": round(now - self.stage_started) if self.stage_started else 0}
 
@@ -266,8 +268,25 @@ class Job:
         self.failed_in = where
         QUEUE.save()
 
+    # Pause freezes the whole process group (CleanCut's worker and its ffmpeg) where it is; Resume
+    # lets it carry on from the same frame. The time spent paused doesn't count towards "time left".
+    def pause(self) -> None:
+        if self.proc and self.proc.poll() is None and not self.paused_at:
+            os.killpg(self.proc.pid, signal.SIGSTOP)
+            self.paused_at = time.time()
+
+    def resume(self) -> None:
+        if self.paused_at:
+            if self.proc and self.proc.poll() is None:
+                os.killpg(self.proc.pid, signal.SIGCONT)
+            gap = time.time() - self.paused_at
+            self.stage_started += gap
+            self.started += gap
+            self.paused_at = 0.0
+
     def cancel(self) -> None:
         self.cancelled = True
+        self.resume()  # a frozen process can't tidy up and exit
         if self.proc and self.proc.poll() is None:
             os.killpg(self.proc.pid, signal.SIGTERM)  # it tidies up its temporary files and exits
             threading.Timer(20, self._kill, [self.proc]).start()
@@ -577,7 +596,8 @@ async def start(req: Request):
     inputs = body.get("inputs") or ([body["input"]] if body.get("input") else [])
     if not inputs:
         raise HTTPException(400, "Choose a movie first.")
-    out_dir = _real(body.get("out_dir", ""))
+    # No folder given: each movie is saved in its own folder, next to the original.
+    out_dir = _real(body["out_dir"]) if body.get("out_dir") else None
     filters = [f for f in body.get("filters", []) if f in ALL_FILTERS]
     if not filters:
         raise HTTPException(400, "Tick at least one filter.")
@@ -596,12 +616,13 @@ async def start(req: Request):
             path = _real(vpath)
             if not os.path.isfile(path):
                 raise HTTPException(400, f"Movie file not found: {os.path.basename(path)}")
-            if os.path.abspath(os.path.join(out_dir, output_name(path))) == os.path.abspath(path):
+            dest = out_dir or os.path.dirname(path)
+            if os.path.abspath(os.path.join(dest, output_name(path))) == os.path.abspath(path):
                 raise HTTPException(400, "The output would replace the movie itself. Pick another folder.")
             if path in lined_up:
                 continue  # already in the list
             lined_up.add(path)
-            jobs.append(Job(QUEUE.next_id, path, out_dir, filters, cover, audio, bool(body.get("review", False))))
+            jobs.append(Job(QUEUE.next_id, path, dest, filters, cover, audio, bool(body.get("review", False))))
             QUEUE.next_id += 1
         if not jobs:
             raise HTTPException(400, "Those movies are already in the list.")
@@ -613,6 +634,22 @@ async def start(req: Request):
 def cancel(item_id: int):
     """Stop the movie being worked on; the queue moves on to the next one."""
     QUEUE.get(item_id).cancel()
+    return {"ok": True}
+
+
+@app.post("/api/items/{item_id}/pause")
+def pause(item_id: int):
+    """Freeze the movie being worked on (the next one doesn't start meanwhile)."""
+    job = QUEUE.get(item_id)
+    if job.state not in RUNNING:
+        raise HTTPException(409, "It isn't being worked on.")
+    job.pause()
+    return {"ok": True}
+
+
+@app.post("/api/items/{item_id}/resume")
+def resume(item_id: int):
+    QUEUE.get(item_id).resume()
     return {"ok": True}
 
 

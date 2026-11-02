@@ -42,10 +42,11 @@ The original movie is never changed. No movie ever leaves your computer.
    - The first start downloads about 13 GB and can take 30 minutes or more. Later starts are quick.
 4. Your browser opens **http://localhost:8800**. That's CleanCut.
 
-CleanCut can only see the movie folder you set (and the folders inside it), and saves there too.
-If you'd rather keep filtered movies in a separate folder, add a line like
-`OUTPUT_DIR=C:/Users/YourName/Filtered Movies` to the settings file (`.env`) and start CleanCut again.
-It then saves there by default, and you can still pick any folder inside either one each time.
+CleanCut can only see the movie folder you set (and the folders inside it). Each filtered movie is
+saved in the same folder as its original, so Jellyfin shows it as a version of that movie. You can pick
+another folder when adding movies; that only counts for those movies. To be able to pick a folder
+outside your movie folder, add a line like `OUTPUT_DIR=C:/Users/YourName/Filtered Movies` to the
+settings file (`.env`) and start CleanCut again.
 
 ## Setting it up on Linux (once)
 
@@ -82,19 +83,22 @@ filtered copies land right next to the originals.
 1. Open **http://localhost:8800**. (On Windows, start **Docker Desktop** first, or just double-click `Start CleanCut`.)
 2. Drag movies onto the page (one or several), or click *pick from your media folder*. In the
    picker you can tick several movies, or click **Add all in this folder** for a whole TV season.
-3. Tick what to filter and choose where to save. Movies added together get the same settings.
+3. Tick what to filter. Movies added together get the same settings. Each is saved next to its
+   original unless you pick another folder (*Change folder*), which only counts for these movies.
 4. **When to start:** it starts at **2:00 AM** unless you change it. Pick any other time, or tick
    **Start right away**. It goes back to 2:00 AM every time you open the page.
 5. Click **Start**. You get the list of your movies, each with its own progress bar. They're worked on
    one at a time, from the top; a full movie usually takes a few hours (see below). You can close the
    browser; it keeps going (or keeps waiting for its start time, with a **Start now instead** button).
-6. To add more, click **+ New movie** under the list. They join the end of the list, with whatever
+6. **Pause** freezes the movie being worked on exactly where it is, and **Resume** carries on from
+   the same spot. **Cancel** stops it (nothing is saved for it) and the next movie starts.
+7. To add more, click **+ New movie** under the list. They join the end of the list, with whatever
    settings you tick for them. Movies still waiting can be moved up or down or taken off the list.
-7. Review is off unless you tick it, so movies are saved by morning without you. A movie with review
+8. Review is off unless you tick it, so movies are saved by morning without you. A movie with review
    ticked stops at **Ready for your review** and the next one carries on. Click **Review**, look over
    the blurred pictures, change anything you want, and click **Save filtered movie**: it's saved as soon
    as nothing else is being worked on.
-8. If one movie fails (a damaged file, or a full drive), it's marked with what went wrong and the rest
+9. If one movie fails (a damaged file, or a full drive), it's marked with what went wrong and the rest
    carry on. Click **Try again** once it's sorted. CleanCut warns you at the top of the list when the
    movies still to be saved won't fit on the drive.
 

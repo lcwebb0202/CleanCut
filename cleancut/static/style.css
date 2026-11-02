@@ -284,13 +284,15 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
 .q-item.done .q-stage { color: var(--ok); font-weight: 600; }
 .q-item.error .q-stage, .q-item.error .q-meta { color: var(--bad); }
 .q-item.review .bar > div { background: var(--warn); }
+.q-item.paused .bar > div { background: var(--muted); }
+.q-item.paused .q-stage { color: var(--muted); font-weight: 600; }
 .q-item.review .q-stage { color: var(--warn); font-weight: 600; }
 .q-item.queued .q-stage, .q-item.ready .q-stage, .q-item.cancelled .q-stage { color: var(--muted); }
 .q-empty { padding: 16px 0; text-align: center; }
 .q-add { display: flex; flex-direction: column; align-items: center; gap: 6px; padding-top: 20px; color: var(--muted); }
 .q-plus {
   width: 52px; height: 52px; border-radius: 50%; border: 2px solid var(--accent); background: var(--soft);
-  color: var(--accent); font-size: 30px; line-height: 1; cursor: pointer;
+  color: var(--accent); cursor: pointer; display: grid; place-items: center; padding: 0;
 }
 .q-plus:hover { background: var(--accent); color: var(--accent-text); }
 .btn.small { padding: 5px 11px; font-size: 14px; }
