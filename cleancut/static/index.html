@@ -35,15 +35,15 @@
   <!-- ============ SETUP ============ -->
   <section id="setup" hidden>
     <div class="card">
-      <h2><span class="num">1</span> Choose a movie</h2>
+      <h2><span class="num">1</span> Choose movies</h2>
       <div id="drop" class="drop" tabindex="0">
-        <div class="drop-main">Drag a movie file here</div>
-        <div class="drop-sub">or <button class="link" id="browse-movie">pick one from your media folder</button></div>
+        <div class="drop-main">Drag movies here</div>
+        <div class="drop-sub">one or several, or <button class="link" id="browse-movie">pick from your media folder</button>
+          (a whole folder works too, for a TV season)</div>
       </div>
-      <div id="movie" class="picked" hidden>
-        <div class="picked-name" id="movie-name"></div>
-        <div class="picked-path" id="movie-path"></div>
-        <button class="link" id="change-movie">Choose a different movie</button>
+      <ul class="m-list" id="movies" hidden></ul>
+      <div class="m-more" id="movies-more" hidden>
+        <button class="link" id="add-more">Add more</button> · <button class="link" id="clear-movies">Remove all</button>
       </div>
       <div id="upload" class="upload" hidden>
         <div id="upload-text"></div>
@@ -101,62 +101,61 @@
 
     <div class="card">
       <h2><span class="num">4</span> When to start</h2>
+      <div class="hint" id="when-queued" hidden></div>
+      <div id="when-pick">
       <div class="when">
         <label class="when-time">Start at <input type="time" id="start-time" value="02:00" autocomplete="off"></label>
         <label class="check inline"><input type="checkbox" id="start-now" autocomplete="off"><span>Start right away</span></label>
       </div>
       <div class="hint" id="when-hint"></div>
+      </div>
     </div>
 
     <div class="start-row">
+      <button class="btn" id="to-queue" hidden>Back to the list</button>
+      <div class="grow"></div>
       <div class="error" id="start-error"></div>
       <button class="btn primary big" id="start" disabled>Start</button>
     </div>
   </section>
 
-  <!-- ============ WAITING (scheduled start) ============ -->
-  <section id="waiting" hidden>
-    <div class="card center">
-      <div class="eyebrow" id="wait-movie"></div>
-      <h2>Waiting to start</h2>
-      <div class="wait-clock" id="wait-at"></div>
-      <div class="hint" id="wait-left"></div>
-      <p class="hint">Leave the computer on and plugged in, and don't let it go to sleep. If it does sleep,
-        CleanCut starts as soon as it wakes up. You can close this page.</p>
-      <p class="hint" id="wait-review"></p>
-      <div class="wait-buttons">
-        <button class="btn" id="wait-cancel">Cancel</button>
-        <button class="btn primary" id="wait-now">Start now instead</button>
+  <!-- ============ QUEUE ============ -->
+  <section id="queue" hidden>
+    <div class="card q-wait" id="q-wait" hidden>
+      <div>
+        <div class="hint">Starts at</div>
+        <div class="wait-clock" id="q-at"></div>
+        <div class="hint" id="q-left"></div>
+      </div>
+      <p class="hint">Leave the computer on and plugged in. If it sleeps anyway, CleanCut starts as soon as it
+        wakes up. You can close this page.</p>
+      <button class="btn primary" id="q-now">Start now instead</button>
+    </div>
+    <div class="note q-disk" id="q-disk" hidden></div>
+    <div class="card">
+      <div class="q-head">
+        <h2>Your movies</h2>
+        <div class="grow"></div>
+        <button class="link" id="q-stop" hidden>Stop all</button>
+        <button class="link" id="q-clear" hidden>Clear finished</button>
+      </div>
+      <ul class="q-list" id="q-list"></ul>
+      <div class="q-add">
+        <button class="q-plus" id="q-new" aria-label="New movie">+</button>
+        <div>New movie</div>
       </div>
     </div>
-  </section>
-
-  <!-- ============ WORKING ============ -->
-  <section id="working" hidden>
-    <div class="card center">
-      <div class="eyebrow" id="w-movie"></div>
-      <h2 id="w-stage">Starting</h2>
-      <div class="bar big"><div id="w-bar"></div></div>
-      <div class="w-meta"><span id="w-pct"></span><span id="w-time"></span></div>
-      <p class="hint">This can take a few hours for a full movie. You can close this page and come back;
-        it keeps going as long as the computer is on and awake.</p>
-      <button class="btn" id="cancel">Cancel</button>
-      <details class="log"><summary>Details</summary><pre id="w-log"></pre></details>
-    </div>
+    <p class="hint center-text">Movies are worked on one at a time, from the top. A full movie takes a few
+      hours. You can close this page and come back; it keeps going as long as the computer is on and awake.</p>
   </section>
 
   <!-- ============ REVIEW ============ -->
   <section id="review-screen" hidden>
-    <div class="card error-card" id="r-error" hidden>
-      <h2>Saving didn't work</h2>
-      <p>Your review choices are kept. You can try <b>Save filtered movie</b> again; if it fails again,
-        send Luke a screenshot of this box (including <i>Details</i>).</p>
-      <div class="hint" id="r-error-msg"></div>
-      <details class="log"><summary>Details</summary><pre id="r-error-log"></pre></details>
-    </div>
+    <button class="link back" id="r-back">‹ Back to the list</button>
     <div class="card">
       <div class="review-head">
         <div>
+          <div class="eyebrow" id="r-movie"></div>
           <h2>Review</h2>
           <div class="hint" id="r-summary"></div>
         </div>
@@ -190,33 +189,11 @@
       <div class="seg small" data-name="r-audio"><button data-v="mute">Mute</button><button data-v="bleep">Bleep</button></div>
       <div class="seg small" data-name="r-cover"><button data-v="box">Black box</button><button data-v="blur">Heavy blur</button></div>
       <div class="grow"></div>
-      <button class="btn" id="r-cancel">Discard</button>
+      <button class="btn" id="r-cancel">Remove from list</button>
       <button class="btn primary" id="r-save">Save filtered movie</button>
     </div>
   </section>
 
-  <!-- ============ DONE / ERROR ============ -->
-  <section id="done" hidden>
-    <div class="card center">
-      <div class="big-icon ok">✓</div>
-      <h2>Finished</h2>
-      <p>Saved as</p>
-      <div class="picked-path" id="d-out"></div>
-      <p class="hint">In Jellyfin, a copy saved next to the original shows up as a second version of the
-        same movie, labeled <b>Filtered</b>. The original stays the one that plays by default.</p>
-      <button class="btn primary" id="d-again">Filter another movie</button>
-    </div>
-  </section>
-
-  <section id="failed" hidden>
-    <div class="card center">
-      <div class="big-icon bad" id="f-icon">!</div>
-      <h2 id="f-title">Something went wrong</h2>
-      <p id="f-msg" class="error"></p>
-      <details class="log"><summary>Details</summary><pre id="f-log"></pre></details>
-      <button class="btn primary" id="f-again">Start over</button>
-    </div>
-  </section>
 </main>
 
 <!-- folder / file browser -->
@@ -229,6 +206,7 @@
   <ul class="list" id="b-list"></ul>
   <div class="dlg-foot">
     <button class="btn" id="b-newfolder">New folder</button>
+    <button class="btn" id="b-all" hidden>Add all in this folder</button>
     <div class="grow"></div>
     <button class="btn primary" id="b-use">Use this folder</button>
   </div>

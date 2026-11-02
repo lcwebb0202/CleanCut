@@ -390,6 +390,9 @@ def render(plan: dict, out_path: str, log=print) -> None:
         name = st["tags"].get("title") or st["tags"].get("language") or f"#{st['index']}"
         if st["text"] and (lang_filters or skips):
             path, n = subtitles.clean_stream(info.path, st, tmp, lang_filters, timeline)
+            if path is None:
+                log(f"  subtitles {name}: left out (no lines in it)")
+                continue
             encode += ["-i", path]
             maps += ["-map", f"{next_input}:0"]
             next_input += 1

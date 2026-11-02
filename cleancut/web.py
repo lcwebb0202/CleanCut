@@ -1,12 +1,13 @@
-"""The browser app: pick a movie, choose filters, watch progress, review, save.
+"""The browser app: pick movies, choose filters, watch progress, review, save.
 
-One movie at a time. The heavy work runs as a separate `python -m cleancut` process so it can
+Movies wait in a queue and are worked on one at a time. The heavy work runs as a separate `python -m cleancut` process so it can
 be cancelled cleanly (it and its ffmpeg children are killed together) and so the GPU memory is
 freed between runs. Its log lines drive the progress bar.
 """
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -30,7 +31,8 @@ UPLOAD_DIR = os.path.join(MEDIA_ROOT, "CleanCut Uploads")
 WORK_ROOT = os.environ.get("WORK_ROOT", "/work")
 VIDEO_EXTS = {".mkv", ".mp4", ".m4v", ".avi", ".mov", ".ts", ".m2ts", ".webm", ".wmv"}
 STATIC = os.path.join(os.path.dirname(__file__), "static")
-JOB_FILE = os.path.join(WORK_ROOT, "job.json")  # so a review survives a restart
+QUEUE_FILE = os.path.join(WORK_ROOT, "queue.json")  # so the list (and reviews) survive a restart
+OLD_JOB_FILE = os.path.join(WORK_ROOT, "job.json")  # the single movie of versions before the queue
 
 # Thumbnail widths in pixels before being blown back up: level 0 is the heaviest blur. The last
 # two are only lightly blurred, so whatever the detector found is always painted black (HIDE_GROW).
@@ -106,11 +108,36 @@ def _show(path: str) -> str:
     return (root["host"] or root["path"]) + ("" if rest == "." else "/" + rest)
 
 
-# ---------------------------------------------------------------- the job
+# ---------------------------------------------------------------- the queue
+
+# Each movie is a Job; the Queue runs them one at a time, in list order. A movie with review
+# ticked stops after scanning ("review") and the queue moves on; once its review is saved it is
+# "ready" and is saved (rendered) the next time nothing else is running.
+#   queued -> analyzing -> (review -> ready ->) rendering -> done
+# Any of them can end in error or cancelled.
+PENDING = ("queued", "ready")             # waiting their turn
+RUNNING = ("analyzing", "rendering")
+FINISHED = ("done", "error", "cancelled")
+SPACE_MARGIN = 2e9  # bytes kept free on top of what a movie needs
+
+
+def _needed_bytes(input_path: str) -> int:
+    """About how much free space saving a movie takes: its size plus a fifth (the filtered copy can
+    come out a bit bigger than the original), plus a margin."""
+    try:
+        return int(os.path.getsize(input_path) * 1.2 + SPACE_MARGIN)
+    except OSError:
+        return int(SPACE_MARGIN)
+
+
+def _gb(n: float) -> str:
+    return f"{n / 1e9:.0f} GB" if n >= 10e9 else f"{n / 1e9:.1f} GB"
+
 
 class Job:
-    def __init__(self, input_path: str, out_dir: str, filters: list[str], cover: str, audio: str, review: bool,
-                 start_at: float = 0.0):
+    def __init__(self, id: int, input_path: str, out_dir: str, filters: list[str], cover: str, audio: str,
+                 review: bool):
+        self.id = id
         self.input = input_path
         self.out_dir = out_dir
         self.filters = filters
@@ -120,53 +147,56 @@ class Job:
         stem = os.path.splitext(os.path.basename(input_path))[0]
         self.workdir = os.path.join(WORK_ROOT, stem)
         self.output = os.path.join(out_dir, output_name(input_path))
-        self.start_at = start_at  # when to begin (epoch seconds); 0 = right away
-        self.state = "waiting" if start_at > time.time() else "analyzing"
-        # waiting, analyzing, review, rendering, done, error, cancelled
-        self.stage = "Waiting to start" if self.state == "waiting" else "Starting"
+        self.state = "queued"
+        self.stage = "Waiting its turn"
         self.pct = 0.0
         self.log: list[str] = []
         self.error = ""
-        self.started = time.time()
-        self.stage_started = time.time()
+        self.failed_in = ""   # "analyze" or "render": where Try again picks up
+        self.restarts = 0     # times it was started again after CleanCut was interrupted
+        self.added = time.time()
+        self.started = 0.0
+        self.stage_started = 0.0
         self.proc: subprocess.Popen | None = None
         self.cancelled = False
 
-    SAVED = ("input", "out_dir", "filters", "cover", "audio", "review", "workdir", "output", "state", "stage",
-             "pct", "log", "error", "started", "start_at")
+    SAVED = ("id", "input", "out_dir", "filters", "cover", "audio", "review", "workdir", "output", "state", "stage",
+             "pct", "log", "error", "failed_in", "restarts", "added", "started")
 
-    def save(self) -> None:
-        try:
-            with open(JOB_FILE, "w") as f:
-                json.dump({k: getattr(self, k) for k in self.SAVED}, f)
-        except OSError:
-            pass
+    def to_dict(self) -> dict:
+        return {k: getattr(self, k) for k in self.SAVED}
 
     @classmethod
-    def restore(cls):
+    def from_dict(cls, d: dict):
         try:
-            with open(JOB_FILE) as f:
-                d = json.load(f)
-        except (OSError, ValueError):
-            return None
-        try:
-            job = cls(d["input"], d["out_dir"], d["filters"], d["cover"], d["audio"], d["review"])
-        except (KeyError, TypeError):  # unreadable: start fresh rather than not start at all
+            job = cls(d["id"], d["input"], d["out_dir"], d["filters"], d["cover"], d["audio"], d["review"])
+        except (KeyError, TypeError):  # unreadable: drop it rather than not start at all
             return None
         for k in cls.SAVED:
             setattr(job, k, d.get(k, getattr(job, k)))
-        if job.state in ("analyzing", "rendering"):
-            job.state, job.stage = "error", "Interrupted"
-            job.error = "CleanCut was restarted (or the computer slept or shut down) while it was working. Please start again."
+        if job.state in RUNNING:
+            # CleanCut stopped mid-movie (restart, sleep, power cut): start that movie again, but not
+            # forever, in case it's the movie itself that brings CleanCut down.
+            job.restarts += 1
+            if job.restarts > 2:
+                job.failed_in = "analyze" if job.state == "analyzing" else "render"
+                job.state, job.stage = "error", "Interrupted"
+                job.error = "CleanCut was interrupted while working on this movie several times."
+            else:
+                job.state = "ready" if job.state == "rendering" else "queued"
+                job.stage = "Waiting its turn (starting again after an interruption)"
+                job.pct = 0.0
         return job
 
     def public(self) -> dict:
-        return {"state": self.state, "stage": self.stage, "pct": round(self.pct, 1),
-                "log": self.log[-60:], "error": self.error, "input": _show(self.input),
-                "input_name": os.path.basename(self.input), "output": _show(self.output),
-                "out_dir": _show(self.out_dir), "filters": self.filters, "cover": self.cover,
-                "audio": self.audio, "review": self.review, "start_at": self.start_at,
-                "elapsed": round(time.time() - self.started), "stage_elapsed": round(time.time() - self.stage_started)}
+        now = time.time()
+        return {"id": self.id, "state": self.state, "stage": self.stage, "pct": round(self.pct, 1),
+                "log": self.log[-60:] if self.state in RUNNING or self.state == "error" else [],
+                "error": self.error, "input": _show(self.input), "input_name": os.path.basename(self.input),
+                "output": _show(self.output), "out_dir": _show(self.out_dir), "filters": self.filters,
+                "cover": self.cover, "audio": self.audio, "review": self.review, "failed_in": self.failed_in,
+                "elapsed": round(now - self.started) if self.started else 0,
+                "stage_elapsed": round(now - self.stage_started) if self.stage_started else 0}
 
     # Progress lines from the CLI, e.g. "  scanned video  45.0%".
     STAGES = [("Step 1/2", "Listening to speech"), ("Step 2/2", "Scanning video"), ("Rendering", "Saving the filtered movie")]
@@ -195,51 +225,46 @@ class Job:
             raise RuntimeError(tail[-1] if tail else f"stopped with code {self.proc.returncode}")
 
     def analyze(self) -> None:
+        """Scan the movie; then save it right away, or stop for a review."""
+        self.state, self.stage, self.pct, self.error = "analyzing", "Starting", 0.0, ""
+        self.started = self.stage_started = time.time()
+        self.log = []
+        QUEUE.save()
         try:
-            # A scheduled start waits here. Checking the clock every second (rather than one long sleep)
-            # lets Cancel and "Start now" work, and starts right away if the computer slept past the time.
-            while self.state == "waiting" and time.time() < self.start_at:
-                if self.cancelled:
-                    raise RuntimeError("cancelled")
-                time.sleep(1)
-            if self.cancelled:
-                raise RuntimeError("cancelled")
-            if self.state == "waiting":
-                self.state, self.stage, self.started, self.stage_started = "analyzing", "Starting", time.time(), time.time()
-                self.save()
             self._run(["analyze", self.input, "--workdir", self.workdir, "--filters", ",".join(self.filters),
                        "--audio", self.audio, "--cover", self.cover])
-            if self.review:
-                self.state, self.stage, self.pct = "review", "Ready for review", 100.0
-                self.save()
-            else:
-                self.render()
         except Exception as e:  # noqa: BLE001 - shown to the user
-            self._fail(e)
+            return self._fail(e, "analyze")
+        if self.review:
+            self.state, self.stage, self.pct = "review", "Ready for your review", 100.0
+            QUEUE.save()
+        else:
+            self.render()
 
     def render(self) -> None:
+        self.state, self.stage, self.pct, self.error = "rendering", "Saving the filtered movie", 0.0, ""
+        self.stage_started = time.time()
+        self.started = self.started or self.stage_started
+        QUEUE.save()
         try:
-            self.state, self.stage, self.pct, self.stage_started = "rendering", "Saving the filtered movie", 0.0, time.time()
-            self.save()
-            self.error = ""
+            free = shutil.disk_usage(self.out_dir).free
+            need = _needed_bytes(self.input)
+            if free < need:
+                raise RuntimeError(f"Not enough free space to save it: it needs about {_gb(need)}, and the "
+                                   f"drive has {_gb(free)} free. Free up some space, then click Try again.")
             self._run(["render", self.plan_path, "--out", self.out_dir])
-            self.state, self.stage, self.pct = "done", "Finished", 100.0
-            self.save()
         except Exception as e:  # noqa: BLE001
-            if self.cancelled or not self.review:
-                self._fail(e)
-            else:
-                # Back to the review, choices kept, so saving can simply be tried again.
-                self.state, self.stage, self.pct = "review", "Ready for review", 100.0
-                self.error = f"Saving didn't work: {e}"
-                self.save()
+            return self._fail(e, "render")
+        self.state, self.stage, self.pct = "done", "Saved", 100.0
+        QUEUE.save()
 
-    def _fail(self, e: Exception) -> None:
+    def _fail(self, e: Exception, where: str) -> None:
         if self.cancelled:
             self.state, self.stage = "cancelled", "Cancelled"
         else:
             self.state, self.stage, self.error = "error", "Something went wrong", str(e)
-        self.save()
+        self.failed_in = where
+        QUEUE.save()
 
     def cancel(self) -> None:
         self.cancelled = True
@@ -257,17 +282,116 @@ class Job:
         return os.path.join(self.workdir, "plan.json")
 
 
-BUSY = ("waiting", "analyzing", "rendering")  # states that block starting another movie
-JOB: Job | None = Job.restore()
-LOCK = threading.Lock()
-if JOB and JOB.state == "waiting":  # CleanCut restarted before a scheduled start: keep the appointment
-    threading.Thread(target=JOB.analyze, daemon=True).start()
+class Queue:
+    """The list of movies, saved to queue.json so it survives restarts, and the one worker thread
+    that goes through it."""
+
+    def __init__(self):
+        self.items: list[Job] = []
+        self.start_at = 0.0  # the whole queue waits for this (epoch seconds); 0 = go
+        self.next_id = 1
+        self.lock = threading.RLock()
+        self._load()
+
+    def _load(self) -> None:
+        try:
+            with open(QUEUE_FILE) as f:
+                d = json.load(f)
+        except (OSError, ValueError):
+            d = None
+        if d is None:
+            try:  # a single movie saved by the version before the queue
+                with open(OLD_JOB_FILE) as f:
+                    old = json.load(f)
+                if old.get("state") == "waiting":
+                    old["state"] = "queued"
+                d = {"items": [dict(old, id=1)], "start_at": old.get("start_at", 0)}
+                os.remove(OLD_JOB_FILE)
+            except (OSError, ValueError, AttributeError):
+                d = {"items": []}
+        self.items = [j for j in (Job.from_dict(x) for x in d.get("items", [])) if j]
+        self.start_at = float(d.get("start_at") or 0)
+        self.next_id = max([j.id for j in self.items] + [0]) + 1
+
+    def save(self) -> None:
+        with self.lock:
+            data = {"items": [j.to_dict() for j in self.items], "start_at": self.start_at}
+        try:
+            with open(QUEUE_FILE + ".tmp", "w") as f:
+                json.dump(data, f)
+            os.replace(QUEUE_FILE + ".tmp", QUEUE_FILE)
+        except OSError:
+            pass
+
+    def get(self, id: int) -> Job:
+        job = next((j for j in self.items if j.id == id), None)
+        if job is None:
+            raise HTTPException(404, "That movie isn't in the list any more.")
+        return job
+
+    def running(self) -> Job | None:
+        return next((j for j in self.items if j.state in RUNNING), None)
+
+    def has_work(self) -> bool:
+        return any(j.state in PENDING + RUNNING for j in self.items)
+
+    def waiting(self) -> bool:
+        """Movies are lined up but the start time hasn't come yet."""
+        return self.start_at > time.time() and not self.running() and any(j.state in PENDING for j in self.items)
+
+    def busy(self) -> bool:
+        """Keep the PC awake and don't update: something is running or lined up."""
+        return self.has_work()
+
+    def add(self, jobs: list[Job], start_at: float) -> None:
+        with self.lock:
+            if not self.has_work():  # a new night: these movies set the start time
+                self.start_at = start_at
+            self.items += jobs
+        self.save()
+
+    def disk_note(self) -> str:
+        """A warning when the movies still to be saved won't fit on their drives."""
+        need: dict[int, list] = {}
+        for j in self.items:
+            if j.state in PENDING + ("review", "analyzing"):
+                try:
+                    dev = os.stat(j.out_dir).st_dev
+                except OSError:
+                    continue
+                n = need.setdefault(dev, [0, j.out_dir, 0])
+                n[0] += _needed_bytes(j.input)
+                n[2] += 1
+        for total, path, count in need.values():
+            free = shutil.disk_usage(path).free
+            if total > free:
+                return (f"{'The movie' if count == 1 else f'The {count} movies'} still to be saved "
+                        f"need{'s' if count == 1 else ''} about {_gb(total)} "
+                        f"of free space, but the drive they're saved to has only {_gb(free)} free. "
+                        "Free up some space, or later movies will stop with a \"not enough space\" message.")
+        return ""
+
+    def worker(self) -> None:
+        """Runs forever: the next movie whose turn it is, in list order."""
+        while True:
+            time.sleep(1)
+            if self.start_at > time.time():
+                continue  # checked every second, so "Start now" and waking up late both work
+            with self.lock:
+                job = next((j for j in self.items if j.state in PENDING), None)
+                if job:
+                    job.cancelled = False
+                    job.state = "analyzing" if job.state == "queued" else "rendering"  # claimed
+            if job is None:
+                continue
+            try:
+                job.analyze() if job.state == "analyzing" else job.render()
+            except Exception as e:  # noqa: BLE001 - never let the worker die
+                job._fail(e, "analyze" if job.state == "analyzing" else "render")
 
 
-def _job() -> Job:
-    if JOB is None:
-        raise HTTPException(404, "No movie is being processed.")
-    return JOB
+QUEUE = Queue()
+threading.Thread(target=QUEUE.worker, daemon=True).start()
 
 
 # Updates. CleanCut can't update itself from inside Docker, so the CleanCut helper on Windows
@@ -305,7 +429,9 @@ def index():
 
 @app.get("/api/state")
 def state():
-    return {"job": JOB.public() if JOB else None, "media_root": _show(MEDIA_ROOT),
+    return {"queue": {"items": [j.public() for j in QUEUE.items], "start_at": QUEUE.start_at,
+                      "waiting": QUEUE.waiting(), "has_work": QUEUE.has_work(), "disk_note": QUEUE.disk_note()},
+            "media_root": _show(MEDIA_ROOT),
             "default_out": {"path": DEFAULT_OUT["name"], "shown": DEFAULT_OUT["host"] or DEFAULT_OUT["path"]} if DEFAULT_OUT else None,
             "filters": sorted(ALL_FILTERS), "blur_levels": len(BLUR_LEVELS), "light_blur": LIGHT_BLUR,
             "update": _update_info()}
@@ -329,7 +455,7 @@ async def helper(req: Request):
     check, HELPER["check"] = HELPER["check"], False
     if update:
         HELPER["status"] = "updating"  # until the helper's next report says so itself
-    return {"busy": bool(JOB and JOB.state in BUSY), "update": update, "check": check}
+    return {"busy": QUEUE.busy(), "update": update, "check": check}
 
 
 @app.post("/api/update-check")
@@ -348,9 +474,9 @@ def helper_log():
 
 @app.post("/api/update")
 def update():
-    with LOCK:
-        if JOB and JOB.state in BUSY:
-            raise HTTPException(409, "CleanCut is busy with a movie. You can update once it's finished.")
+    with QUEUE.lock:
+        if QUEUE.busy():
+            raise HTTPException(409, "CleanCut is busy with movies. You can update once they're finished.")
         if HELPER["git"]:
             raise HTTPException(409, "This copy of CleanCut is kept up to date with Git (git pull).")
         if time.time() - HELPER["seen"] >= HELPER_ALIVE:
@@ -443,62 +569,120 @@ async def make_folder(req: Request):
 
 @app.post("/api/start")
 async def start(req: Request):
-    global JOB
+    """Add one or more movies to the queue, all with the same settings. The start time only counts
+    when nothing else is lined up; otherwise they simply join the end of the list."""
     body = await req.json()
-    with LOCK:
-        if JOB and JOB.state in BUSY:
-            raise HTTPException(409, "A movie is already being processed.")
-        if _update_info()["status"] in ("requested", "updating"):
-            raise HTTPException(409, "CleanCut is updating. Try again once the page has refreshed.")
-        input_path = _real(body["input"])
-        out_dir = _real(body.get("out_dir", ""))
-        if not os.path.isfile(input_path):
-            raise HTTPException(400, "Movie file not found.")
-        filters = [f for f in body.get("filters", []) if f in ALL_FILTERS]
-        if not filters:
-            raise HTTPException(400, "Tick at least one filter.")
-        if os.path.abspath(os.path.join(out_dir, output_name(input_path))) == os.path.abspath(input_path):
-            raise HTTPException(400, "The output would replace the movie itself. Pick another folder.")
-        cover = body.get("cover") if body.get("cover") in ("box", "blur") else "box"
-        audio = body.get("audio") if body.get("audio") in ("mute", "bleep") else "mute"
-        try:
-            start_at = max(0.0, float(body.get("start_at") or 0))
-        except (TypeError, ValueError):
-            raise HTTPException(400, "That start time doesn't look right.")
-        if start_at > time.time() + 7 * 86400:
-            raise HTTPException(400, "Pick a start time within the next week.")
-        JOB = Job(input_path, out_dir, filters, cover, audio, bool(body.get("review", False)), start_at)
-        JOB.save()
-        threading.Thread(target=JOB.analyze, daemon=True).start()
-    return JOB.public()
+    if _update_info()["status"] in ("requested", "updating"):
+        raise HTTPException(409, "CleanCut is updating. Try again once the page has refreshed.")
+    inputs = body.get("inputs") or ([body["input"]] if body.get("input") else [])
+    if not inputs:
+        raise HTTPException(400, "Choose a movie first.")
+    out_dir = _real(body.get("out_dir", ""))
+    filters = [f for f in body.get("filters", []) if f in ALL_FILTERS]
+    if not filters:
+        raise HTTPException(400, "Tick at least one filter.")
+    cover = body.get("cover") if body.get("cover") in ("box", "blur") else "box"
+    audio = body.get("audio") if body.get("audio") in ("mute", "bleep") else "mute"
+    try:
+        start_at = max(0.0, float(body.get("start_at") or 0))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "That start time doesn't look right.")
+    if start_at > time.time() + 7 * 86400:
+        raise HTTPException(400, "Pick a start time within the next week.")
+    with QUEUE.lock:
+        lined_up = {j.input for j in QUEUE.items if j.state not in FINISHED}
+        jobs = []
+        for vpath in inputs:
+            path = _real(vpath)
+            if not os.path.isfile(path):
+                raise HTTPException(400, f"Movie file not found: {os.path.basename(path)}")
+            if os.path.abspath(os.path.join(out_dir, output_name(path))) == os.path.abspath(path):
+                raise HTTPException(400, "The output would replace the movie itself. Pick another folder.")
+            if path in lined_up:
+                continue  # already in the list
+            lined_up.add(path)
+            jobs.append(Job(QUEUE.next_id, path, out_dir, filters, cover, audio, bool(body.get("review", False))))
+            QUEUE.next_id += 1
+        if not jobs:
+            raise HTTPException(400, "Those movies are already in the list.")
+        QUEUE.add(jobs, start_at)
+    return {"added": len(jobs)}
 
 
-@app.post("/api/cancel")
-def cancel():
-    _job().cancel()
+@app.post("/api/items/{item_id}/cancel")
+def cancel(item_id: int):
+    """Stop the movie being worked on; the queue moves on to the next one."""
+    QUEUE.get(item_id).cancel()
+    return {"ok": True}
+
+
+@app.post("/api/items/{item_id}/remove")
+def remove(item_id: int):
+    with QUEUE.lock:
+        job = QUEUE.get(item_id)
+        if job.state in RUNNING:
+            raise HTTPException(409, "Cancel it first.")
+        QUEUE.items.remove(job)
+    QUEUE.save()
+    return {"ok": True}
+
+
+@app.post("/api/items/{item_id}/move")
+def move(item_id: int, by: int):
+    """Move a movie up (by=-1) or down (by=1) the list."""
+    with QUEUE.lock:
+        job = QUEUE.get(item_id)
+        i = QUEUE.items.index(job)
+        k = max(0, min(len(QUEUE.items) - 1, i + by))
+        QUEUE.items.insert(k, QUEUE.items.pop(i))
+    QUEUE.save()
+    return {"ok": True}
+
+
+@app.post("/api/items/{item_id}/retry")
+def retry(item_id: int):
+    """Try a movie that failed or was cancelled again, picking up after the scan when that was done."""
+    with QUEUE.lock:
+        job = QUEUE.get(item_id)
+        if job.state not in ("error", "cancelled"):
+            raise HTTPException(409, "It isn't stopped.")
+        scanned = job.failed_in == "render" and os.path.exists(job.plan_path)
+        job.state = "ready" if scanned else "queued"
+        job.stage, job.pct, job.error, job.restarts = "Waiting its turn", 0.0, "", 0
+        if not QUEUE.running() and not any(j.state in PENDING and j is not job for j in QUEUE.items):
+            QUEUE.start_at = 0  # nothing else lined up: go now, not at tonight's start time
+    QUEUE.save()
+    return {"ok": True}
+
+
+@app.post("/api/clear")
+def clear():
+    """Take saved, failed and cancelled movies off the list."""
+    with QUEUE.lock:
+        QUEUE.items = [j for j in QUEUE.items if j.state not in FINISHED]
+    QUEUE.save()
     return {"ok": True}
 
 
 @app.post("/api/start-now")
 def start_now():
     """Skip the rest of the wait for a scheduled start."""
-    job = _job()
-    if job.state == "waiting":
-        job.start_at = time.time()
+    QUEUE.start_at = 0
+    QUEUE.save()
     return {"ok": True}
 
 
-@app.post("/api/reset")
-def reset():
-    global JOB
-    with LOCK:
-        if JOB and JOB.state in BUSY:
-            raise HTTPException(409, "Cancel the current movie first.")
-        JOB = None
-        try:
-            os.remove(JOB_FILE)
-        except OSError:
-            pass
+@app.post("/api/stop")
+def stop():
+    """Cancel everything still to do: the running movie and the lined-up ones (reviews are kept)."""
+    with QUEUE.lock:
+        for j in QUEUE.items:
+            if j.state in PENDING:
+                j.failed_in = "render" if j.state == "ready" else "analyze"
+                j.state, j.stage = "cancelled", "Cancelled"
+            elif j.state in RUNNING:
+                j.cancel()
+    QUEUE.save()
     return {"ok": True}
 
 
@@ -538,10 +722,10 @@ def _cover_at(ev: dict, t: float):
     return False
 
 
-@app.get("/api/plan")
-def plan():
-    job = _job()
-    if job.state not in ("review", "rendering", "done"):
+@app.get("/api/items/{item_id}/plan")
+def plan(item_id: int):
+    job = QUEUE.get(item_id)
+    if job.state not in ("review", "ready", "rendering", "done") or not os.path.exists(job.plan_path):
         raise HTTPException(409, "Not ready for review yet.")
     p = load_plan(job.plan_path)
     visual, words = [], []
@@ -565,11 +749,11 @@ def plan():
             "categories": {c: c for c in language.CATEGORIES}}
 
 
-@app.post("/api/plan")
-async def update_plan(req: Request):
+@app.post("/api/items/{item_id}/plan")
+async def update_plan(item_id: int, req: Request):
     """Save review choices: {"actions": {id: action}, "cover": ..., "audio": ...}."""
-    job = _job()
-    if job.state != "review":
+    job = QUEUE.get(item_id)
+    if job.state not in ("review", "ready"):
         raise HTTPException(409, "Not in review.")
     body = await req.json()
     p = load_plan(job.plan_path)
@@ -585,26 +769,27 @@ async def update_plan(req: Request):
             p["settings"][key] = body[key]
             setattr(job, key, body[key])
     save_plan(p, job.plan_path)
-    job.save()
+    QUEUE.save()
     return {"ok": True}
 
 
-@app.post("/api/render")
-def render():
-    job = _job()
-    with LOCK:
+@app.post("/api/items/{item_id}/render")
+def render(item_id: int):
+    """Review done: save it as soon as nothing else is being worked on."""
+    with QUEUE.lock:
+        job = QUEUE.get(item_id)
         if job.state != "review":
             raise HTTPException(409, "Not in review.")
-        job.state = "rendering"
-        threading.Thread(target=job.render, daemon=True).start()
+        job.state, job.stage, job.pct = "ready", "Reviewed, waiting its turn to be saved", 0.0
+    QUEUE.save()
     return job.public()
 
 
-@app.get("/api/thumb/{event_id}")
-def thumb(event_id: int, level: int = 0, f: int = 0):
+@app.get("/api/items/{item_id}/thumb/{event_id}")
+def thumb(item_id: int, event_id: int, level: int = 0, f: int = 0):
     """A blurred still of a flagged moment (frame f of its preview frames), with everything the
     detector found painted black. The sharp frame never leaves the server."""
-    job = _job()
+    job = QUEUE.get(item_id)
     ev = next((e for e in load_plan(job.plan_path)["events"] if e["id"] == event_id), None)
     if ev is None or ev["type"] != "visual":
         raise HTTPException(404)

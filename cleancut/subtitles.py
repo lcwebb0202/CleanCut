@@ -149,8 +149,10 @@ def dialogue_cues(path: str) -> list[tuple[float, float, str]]:
     return best
 
 
-def clean_stream(path: str, stream: dict, out_dir: str, enabled: set[str], timeline: Timeline) -> tuple[str, int]:
-    """Extract one text subtitle stream, clean it, and return (cleaned file, words masked)."""
+def clean_stream(path: str, stream: dict, out_dir: str, enabled: set[str], timeline: Timeline) -> tuple[str | None, int]:
+    """Extract one text subtitle stream, clean it, and return (cleaned file, words masked). The file
+    is None when no lines are left (a forced-subtitles track often has none in a clip, or after a
+    cut), since ffmpeg refuses an empty subtitle file and the whole save would fail."""
     fmt = TEXT_CODECS[stream["codec"]]
     raw = os.path.join(out_dir, f"sub{stream['index']}.orig.{fmt}")
     run(["ffmpeg", "-y", "-v", "error", "-i", path, "-map", f"0:s:{stream['index']}", "-c:s", fmt, raw])
@@ -158,6 +160,8 @@ def clean_stream(path: str, stream: dict, out_dir: str, enabled: set[str], timel
         text = f.read()
     os.remove(raw)
     cleaned, n = (clean_ass if fmt == "ass" else clean_srt)(text, enabled, timeline)
+    if "-->" not in cleaned and "Dialogue:" not in cleaned:
+        return None, n
     out = os.path.join(out_dir, f"sub{stream['index']}.{fmt}")
     with open(out, "w", encoding="utf-8") as f:
         f.write(cleaned)

@@ -80,15 +80,23 @@ filtered copies land right next to the originals.
 ## Using it
 
 1. Open **http://localhost:8800**. (On Windows, start **Docker Desktop** first, or just double-click `Start CleanCut`.)
-2. Drag a movie onto the page, or click *pick one from your media folder*.
-3. Tick what to filter and choose where to save.
+2. Drag movies onto the page (one or several), or click *pick from your media folder*. In the
+   picker you can tick several movies, or click **Add all in this folder** for a whole TV season.
+3. Tick what to filter and choose where to save. Movies added together get the same settings.
 4. **When to start:** it starts at **2:00 AM** unless you change it. Pick any other time, or tick
    **Start right away**. It goes back to 2:00 AM every time you open the page.
-5. Click **Start**. A full movie usually takes a few hours (see below). You can close the browser;
-   it keeps going (or keeps waiting for its start time). While it waits you can still click
-   **Start now instead** or **Cancel**.
-6. Review is off unless you tick it, so the movie is saved by morning without you. If you ticked
-   *review*, look over the blurred pictures, change anything you want, and click **Save filtered movie**.
+5. Click **Start**. You get the list of your movies, each with its own progress bar. They're worked on
+   one at a time, from the top; a full movie usually takes a few hours (see below). You can close the
+   browser; it keeps going (or keeps waiting for its start time, with a **Start now instead** button).
+6. To add more, click **+ New movie** under the list. They join the end of the list, with whatever
+   settings you tick for them. Movies still waiting can be moved up or down or taken off the list.
+7. Review is off unless you tick it, so movies are saved by morning without you. A movie with review
+   ticked stops at **Ready for your review** and the next one carries on. Click **Review**, look over
+   the blurred pictures, change anything you want, and click **Save filtered movie**: it's saved as soon
+   as nothing else is being worked on.
+8. If one movie fails (a damaged file, or a full drive), it's marked with what went wrong and the rest
+   carry on. Click **Try again** once it's sorted. CleanCut warns you at the top of the list when the
+   movies still to be saved won't fit on the drive.
 
 ### The new file and Jellyfin
 

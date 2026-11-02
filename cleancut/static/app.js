@@ -1,9 +1,11 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-const SCREENS = ["setup", "waiting", "working", "review-screen", "done", "failed"];
+const SCREENS = ["setup", "queue", "review-screen"];
 let STATE = null;          // last /api/state
-let movie = null;          // {path, shown, dir} chosen input (media-relative path)
+let screen = null;         // "setup" (adding movies), "queue" (the list) or "review"
+let reviewId = null;       // the movie being reviewed
+let movies = [];           // [{path, shown, dir}] chosen to add (media-relative paths)
 let outDir = null;         // {path, shown}
 let pollTimer = null;
 let review = null;         // {visual, words, settings, actions: {id: action}, blur: {id: level}}
@@ -86,7 +88,7 @@ document.querySelectorAll(".seg[data-name]").forEach((seg) => {
   });
 });
 
-// ------------------------------------------------------------ setup screen
+// ------------------------------------------------------------ setup screen (adding movies)
 
 function initSetup() {
   const filters = load("filters2", ["nudity", "sex", "suggestive", "fword", "strong", "mild", "blasphemy", "slurs"]);
@@ -122,7 +124,23 @@ function nextStart() {
   return at;
 }
 
+// Movies already lined up: new ones join the end of the list and the start time doesn't apply.
+const queueBusy = () => !!(STATE && STATE.queue.has_work);
+
 function updateWhen() {
+  const busy = queueBusy();
+  const n = movies.length;
+  $("when-pick").hidden = busy;
+  $("when-queued").hidden = !busy;
+  if (busy) {
+    $("when-queued").textContent = STATE.queue.waiting
+      ? `Other movies are already lined up to start at ${fmtClock(new Date(STATE.queue.start_at * 1000))}. ` +
+        `${n === 1 ? "This one is" : "These are"} added to the end of the list and start after them.`
+      : `Other movies are already in the list. ${n === 1 ? "This one is" : "These are"} added to the end and ` +
+        "start when it's their turn.";
+    $("start").textContent = "Add to the list";
+    return true;
+  }
   const now = $("start-now").checked;
   $("start-time").disabled = now;
   const at = now ? null : nextStart();
@@ -132,7 +150,7 @@ function updateWhen() {
   else {
     hint = `It starts at ${fmtClock(at)}, in ${fmtDuration(Math.round((at - Date.now()) / 1000))}. `
       + "Leave the computer on and plugged in, and don't let it go to sleep.";
-    if ($("review").checked) hint += " It will wait for your review before saving; untick the review box above to have the movie saved by morning.";
+    if ($("review").checked) hint += " Each movie waits for your review before it's saved, while the next one carries on.";
   }
   $("when-hint").textContent = hint;
   $("start").textContent = now ? "Start" : at ? "Start at " + fmtClock(at) : "Start";
@@ -145,18 +163,19 @@ $("review").addEventListener("change", updateSetup);
 setInterval(() => { if (!$("setup").hidden) updateWhen(); }, 30000);  // keeps "in 5 h 10 min" current
 
 // Where to save: the folder picked last time, else the save folder from the settings
-// (e.g. "CleanCut Edited Media"), else next to the movie.
+// (e.g. "CleanCut Edited Media"), else next to the (first) movie.
 function saveDir() {
   if (outDir) return outDir;
   if (STATE && STATE.default_out) return STATE.default_out;
-  return movie && { path: movie.dir, shown: movie.shown.split("/").slice(0, -1).join("/") };
+  const m = movies[0];
+  return m && { path: m.dir, shown: m.shown.split("/").slice(0, -1).join("/") };
 }
 
 // The exact file name, plus a warning when Jellyfin wouldn't show it as a version of the original.
 async function showOutputInfo(input, outPath) {
   try {
     const info = await api(`/api/output?input=${encodeURIComponent(input)}&out_dir=${encodeURIComponent(outPath)}`);
-    if (!movie || movie.path !== input || saveDir().path !== outPath) return;  // choice changed meanwhile
+    if (movies.length !== 1 || movies[0].path !== input || saveDir().path !== outPath) return;  // changed meanwhile
     $("out-name").textContent = "File name: " + info.name;
     $("out-note").textContent = info.note || "";
     $("out-note").hidden = !info.note;
@@ -167,20 +186,28 @@ function chosenFilters() {
   return [...document.querySelectorAll('input[name="f"]:checked')].map((c) => c.value);
 }
 
+function addMovies(list) {
+  for (const m of list) if (!movies.some((x) => x.path === m.path)) movies.push(m);
+  updateSetup();
+}
+
 function updateSetup() {
-  $("drop").hidden = !!movie;
-  $("movie").hidden = !movie;
-  if (movie) {
-    $("movie-name").textContent = movie.shown.split("/").pop();
-    $("movie-path").textContent = movie.shown;
-  }
+  $("drop").hidden = movies.length > 0;
+  $("movies").hidden = $("movies-more").hidden = !movies.length;
+  $("movies").replaceChildren(...movies.map((m, i) => el("li", {},
+    el("div", { class: "grow" },
+      el("div", { class: "picked-name" }, m.shown.split("/").pop()),
+      el("div", { class: "picked-path" }, m.shown)),
+    el("button", { class: "x", title: "Remove", "aria-label": "Remove",
+      onclick: () => { movies.splice(i, 1); updateSetup(); } }, "×"))));
   const dir = saveDir();
   $("out-path").textContent = dir ? dir.shown : "Choose a movie first";
-  $("out-name").textContent = "";
+  $("out-name").textContent = movies.length > 1 ? `Each is saved as its own name plus " - Filtered".` : "";
   $("out-note").hidden = true;
-  if (movie && dir) showOutputInfo(movie.path, dir.path);
+  if (movies.length === 1 && dir) showOutputInfo(movies[0].path, dir.path);
   const timeOk = updateWhen();
-  $("start").disabled = !movie || chosenFilters().length === 0 || !timeOk;
+  $("start").disabled = !movies.length || chosenFilters().length === 0 || !timeOk;
+  $("to-queue").hidden = !(STATE && STATE.queue.items.length);
 }
 
 document.querySelectorAll('input[name="f"]').forEach((c) => c.addEventListener("change", updateSetup));
@@ -191,18 +218,23 @@ const drop = $("drop");
 ["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("over"); }));
 ["dragleave", "drop"].forEach((t) => drop.addEventListener(t, () => drop.classList.remove("over")));
 window.addEventListener("dragover", (e) => e.preventDefault());
-window.addEventListener("drop", (e) => e.preventDefault());
-drop.addEventListener("drop", async (e) => {
+window.addEventListener("drop", (e) => {
   e.preventDefault();
-  const file = e.dataTransfer.files[0];
-  if (file) await useDroppedFile(file);
+  if (!$("setup").hidden && e.target !== drop && !drop.contains(e.target)) dropFiles(e.dataTransfer.files);
+});
+drop.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dropFiles(e.dataTransfer.files);
 });
 
-async function useDroppedFile(file) {
+async function dropFiles(files) {
   $("start-error").textContent = "";
+  for (const file of files) await useDroppedFile(file);
+}
+
+async function useDroppedFile(file) {
   try {
-    movie = await api("/api/find", { method: "POST", body: { name: file.name, size: file.size } });
-    updateSetup();
+    addMovies([await api("/api/find", { method: "POST", body: { name: file.name, size: file.size } })]);
     return;
   } catch (e) { /* not found: offer to copy */ }
   const ok = confirm(
@@ -212,41 +244,48 @@ async function useDroppedFile(file) {
   if (!ok) return;
   $("upload").hidden = false;
   $("drop").hidden = true;
-  const xhr = new XMLHttpRequest();
-  xhr.open("PUT", "/api/upload?name=" + encodeURIComponent(file.name));
-  xhr.upload.onprogress = (ev) => {
-    const pct = ev.total ? (ev.loaded / ev.total) * 100 : 0;
-    $("upload-bar").style.width = pct + "%";
-    $("upload-text").textContent = `Copying ${file.name}… ${pct.toFixed(0)}%`;
-  };
-  xhr.onload = () => {
-    $("upload").hidden = true;
-    if (xhr.status === 200) movie = JSON.parse(xhr.responseText);
-    else $("start-error").textContent = "Copying failed: " + xhr.responseText;
-    updateSetup();
-  };
-  xhr.onerror = () => { $("upload").hidden = true; $("start-error").textContent = "Copying failed."; updateSetup(); };
-  xhr.send(file);
+  await new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", "/api/upload?name=" + encodeURIComponent(file.name));
+    xhr.upload.onprogress = (ev) => {
+      const pct = ev.total ? (ev.loaded / ev.total) * 100 : 0;
+      $("upload-bar").style.width = pct + "%";
+      $("upload-text").textContent = `Copying ${file.name}… ${pct.toFixed(0)}%`;
+    };
+    xhr.onload = () => {
+      $("upload").hidden = true;
+      if (xhr.status === 200) addMovies([JSON.parse(xhr.responseText)]);
+      else $("start-error").textContent = "Copying failed: " + xhr.responseText;
+      updateSetup();
+      resolve();
+    };
+    xhr.onerror = () => { $("upload").hidden = true; $("start-error").textContent = "Copying failed."; updateSetup(); resolve(); };
+    xhr.send(file);
+  });
 }
 
 $("browse-movie").addEventListener("click", () => openBrowser("file"));
-$("change-movie").addEventListener("click", () => { movie = null; updateSetup(); openBrowser("file"); });
+$("add-more").addEventListener("click", () => openBrowser("file"));
+$("clear-movies").addEventListener("click", () => { movies = []; updateSetup(); });
 $("browse-out").addEventListener("click", () => openBrowser("folder"));
+$("to-queue").addEventListener("click", () => go("queue"));
 
 $("start").addEventListener("click", async () => {
   const filters = chosenFilters();
   const body = {
-    input: movie.path,
+    inputs: movies.map((m) => m.path),
     out_dir: saveDir().path,
     filters, audio: segValue("audio"), cover: segValue("cover"), review: $("review").checked,
-    start_at: $("start-now").checked ? 0 : nextStart().getTime() / 1000,
+    start_at: queueBusy() || $("start-now").checked ? 0 : nextStart().getTime() / 1000,
   };
   save("filters2", filters); save("audio", body.audio); save("cover", body.cover);
   $("start").disabled = true;
   $("start-error").textContent = "";
   try {
     await api("/api/start", { method: "POST", body });
-    await refresh();
+    movies = [];
+    resetChoices();
+    go("queue");
   } catch (e) {
     $("start-error").textContent = e.message;
     $("start").disabled = false;
@@ -255,51 +294,75 @@ $("start").addEventListener("click", async () => {
 
 // ------------------------------------------------------------ file / folder browser
 
+// Choosing movies: tick any number, or "Add all in this folder" (a TV season).
 let browserMode = "file";
 let browserPath = "";
+let browserFiles = [];     // the movies in the folder being shown
+let ticked = new Map();    // ticked movies, path -> movie (they can come from several folders)
 
 function openBrowser(mode) {
   browserMode = mode;
-  $("b-title").textContent = mode === "file" ? "Choose a movie" : "Choose where to save";
-  $("b-use").hidden = $("b-newfolder").hidden = mode !== "folder";
+  ticked = new Map();
+  $("b-title").textContent = mode === "file" ? "Choose movies" : "Choose where to save";
+  $("b-newfolder").hidden = mode !== "folder";
   const start = mode === "folder" ? (saveDir() || { path: "" }).path : load("lastDir2", "");
   $("browser").showModal();
   browseTo(start).catch(() => browseTo(""));
+}
+
+function updateBrowserButtons() {
+  if (browserMode === "folder") {
+    $("b-use").textContent = "Use this folder";
+    $("b-use").disabled = !browserPath;
+    $("b-all").hidden = true;
+    return;
+  }
+  $("b-use").textContent = ticked.size ? `Add ${ticked.size} movie${ticked.size === 1 ? "" : "s"}` : "Add";
+  $("b-use").disabled = !ticked.size;
+  $("b-all").hidden = browserFiles.length < 2;
+  $("b-all").textContent = `Add all ${browserFiles.length} in this folder`;
 }
 
 async function browseTo(path) {
   const d = await api("/api/browse?path=" + encodeURIComponent(path));
   browserPath = d.path;
   if (browserMode === "file") save("lastDir2", d.path);
-  $("b-use").disabled = $("b-newfolder").disabled = !d.path;  // the top level lists folders but isn't one itself
-  const crumbs = $("b-crumbs");
-  crumbs.replaceChildren(d.shown);
+  $("b-newfolder").disabled = !d.path;  // the top level lists folders but isn't one itself
+  $("b-crumbs").replaceChildren(d.shown);
   const list = $("b-list");
   list.replaceChildren();
   if (d.parent != null) list.append(el("li", {}, el("button", { onclick: () => browseTo(d.parent) }, el("span", { class: "ico" }, "↑"), "Up one folder")));
   for (const name of d.dirs) {
     list.append(el("li", {}, el("button", { onclick: () => browseTo((d.path ? d.path + "/" : "") + name) }, el("span", { class: "ico" }, "📁"), name)));
   }
-  if (browserMode === "file") {
-    for (const f of d.files) {
-      const path = (d.path ? d.path + "/" : "") + f.name;
-      list.append(el("li", {}, el("button", {
-        onclick: () => {
-          movie = { path, shown: d.shown + "/" + f.name, dir: d.path };
-          $("browser").close();
-          updateSetup();
-        },
-      }, el("span", { class: "ico" }, "🎬"), f.name, el("span", { class: "size" }, fmtSize(f.size)))));
-    }
+  browserFiles = browserMode === "file"
+    ? d.files.map((f) => ({ path: (d.path ? d.path + "/" : "") + f.name, shown: d.shown + "/" + f.name, dir: d.path, size: f.size }))
+    : [];
+  for (const f of browserFiles) {
+    const box = el("input", { type: "checkbox", checked: ticked.has(f.path),
+      onchange: (e) => { e.target.checked ? ticked.set(f.path, f) : ticked.delete(f.path); updateBrowserButtons(); } });
+    list.append(el("li", {}, el("label", { class: "pick" }, box,
+      el("span", { class: "ico" }, "🎬"), f.shown.split("/").pop(), el("span", { class: "size" }, fmtSize(f.size)))));
   }
-  if (!list.children.length || (browserMode === "file" && !d.files.length && !d.dirs.length)) {
+  if (!list.children.length || (browserMode === "file" && !browserFiles.length && !d.dirs.length)) {
     list.append(el("li", { class: "empty" }, browserMode === "file" ? "No movies in this folder." : "No folders here."));
   }
   $("browser").dataset.shown = d.shown;
+  updateBrowserButtons();
+}
+
+function useTicked(files) {
+  $("browser").close();
+  addMovies(files.map(({ path, shown, dir }) => ({ path, shown, dir })));
 }
 
 $("b-close").addEventListener("click", () => $("browser").close());
+$("b-all").addEventListener("click", () => useTicked(browserFiles));
 $("b-use").addEventListener("click", () => {
+  if (browserMode === "file") {
+    useTicked([...ticked.values()]);
+    return;
+  }
   outDir = { path: browserPath, shown: $("browser").dataset.shown };
   save("outDir2", outDir);
   $("browser").close();
@@ -314,50 +377,105 @@ $("b-newfolder").addEventListener("click", async () => {
   } catch (e) { alert(e.message); }
 });
 
-// ------------------------------------------------------------ waiting for a scheduled start
+// ------------------------------------------------------------ the list of movies (queue)
 
-function showWaiting(job) {
-  show("waiting");
-  const at = new Date(job.start_at * 1000);
-  $("wait-movie").textContent = job.input_name;
-  $("wait-at").textContent = fmtClock(at);
-  const left = Math.round(job.start_at - Date.now() / 1000);
-  $("wait-left").textContent = left > 0 ? "Starts in " + fmtDuration(left) : "Starting…";
-  $("wait-review").textContent = job.review
-    ? "When it's done looking through the movie, it waits for your review before saving."
-    : "The filtered movie is saved without a review, usually by morning.";
+const openLogs = new Set();  // movies whose Details are open, kept across the list being redrawn
+
+async function itemAction(id, what, question) {
+  if (question && !confirm(question)) return;
+  try {
+    await api(`/api/items/${id}/${what}`, { method: "POST" });
+  } catch (e) { alert(e.message); }
+  refresh();
 }
 
-$("wait-cancel").addEventListener("click", async () => {
-  if (!confirm("Cancel the scheduled start?")) return;
-  await api("/api/cancel", { method: "POST" });
-  refresh();
-});
-$("wait-now").addEventListener("click", async () => {
-  await api("/api/start-now", { method: "POST" });
-  refresh();
-});
+function timeLeft(j) {
+  if (!(j.pct > 3 && j.pct < 100)) return "";
+  return "about " + fmtDuration(Math.round((j.stage_elapsed / j.pct) * (100 - j.pct))) + " left";
+}
 
-// ------------------------------------------------------------ progress
-
-function showWorking(job) {
-  show("working");
-  $("w-movie").textContent = job.input_name;
-  $("w-stage").textContent = job.stage;
-  $("w-bar").style.width = job.pct + "%";
-  $("w-pct").textContent = job.pct ? job.pct.toFixed(0) + "%" : "";
-  let time = "Running for " + fmtDuration(job.elapsed);
-  if (job.pct > 3 && job.pct < 100) {
-    const left = (job.stage_elapsed / job.pct) * (100 - job.pct);
-    time += " · this step: about " + fmtDuration(Math.round(left)) + " left";
+function queueRow(j, i, items) {
+  const running = j.state === "analyzing" || j.state === "rendering";
+  const lined = j.state === "queued" || j.state === "ready";
+  const q = STATE.queue;
+  let stage = j.stage, meta = "", pct = 0, cls = j.state;
+  if (running) {
+    pct = j.pct;
+    meta = [j.pct ? j.pct.toFixed(0) + "%" : "", timeLeft(j)].filter(Boolean).join(" · ");
+  } else if (lined && q.waiting) {
+    stage = j.state === "ready" ? "Reviewed, saves after the start time" : `Starts at ${fmtClock(new Date(q.start_at * 1000))}`;
+  } else if (j.state === "review") {
+    stage = "Ready for your review";
+    meta = "The next movie carries on meanwhile";
+    pct = 100;
+  } else if (j.state === "done") {
+    stage = "✓ Saved";
+    meta = j.output;
+    pct = 100;
+  } else if (j.state === "error") {
+    stage = "✗ " + (j.stage === "Interrupted" ? "Interrupted" : "Didn't work");
+    meta = j.error;
+  } else if (j.state === "cancelled") {
+    meta = "Nothing was saved.";
   }
-  $("w-time").textContent = time;
-  $("w-log").textContent = job.log.join("\n");
+
+  const buttons = [];
+  const btn = (label, onclick, extra = {}) => el("button", { class: "btn small", onclick, ...extra }, label);
+  if (j.state === "review") buttons.push(btn("Review", () => go("review", j.id), { class: "btn small primary" }));
+  if (j.state === "error" || j.state === "cancelled") buttons.push(btn("Try again", () => itemAction(j.id, "retry")));
+  if (running) {
+    buttons.push(btn("Cancel", () => itemAction(j.id, "cancel",
+      `Stop working on "${j.input_name}"? Nothing is saved for it${items.some((x) => x.state === "queued" || x.state === "ready") ? ", and the next movie starts" : ""}.`)));
+  }
+  if (lined) {
+    buttons.push(btn("↑", () => itemAction(j.id, "move?by=-1"), { title: "Move up", disabled: i === 0 }));
+    buttons.push(btn("↓", () => itemAction(j.id, "move?by=1"), { title: "Move down", disabled: i === items.length - 1 }));
+  }
+  if (!running) {
+    const ask = j.state === "done" ? null
+      : j.state === "review" || j.state === "ready" ? `Take "${j.input_name}" off the list? Your review is thrown away and nothing is saved.`
+      : `Take "${j.input_name}" off the list?`;
+    buttons.push(btn("×", () => itemAction(j.id, "remove", ask), { title: "Take off the list", "aria-label": "Take off the list" }));
+  }
+
+  const details = j.log.length ? el("details", { class: "log", open: openLogs.has(j.id),
+    ontoggle: (e) => { e.target.open ? openLogs.add(j.id) : openLogs.delete(j.id); } },
+    el("summary", {}, "Details"), el("pre", {}, j.log.join("\n"))) : null;
+  return el("li", { class: "q-item " + cls },
+    el("div", { class: "q-name" }, j.input_name,
+      el("div", { class: "q-sub" }, j.review ? "Review before saving" : "Saved without review")),
+    el("div", { class: "q-mid" },
+      el("div", { class: "q-stage" }, stage),
+      el("div", { class: "bar" }, el("div", { style: `width:${pct}%` })),
+      el("div", { class: "q-meta" }, meta)),
+    el("div", { class: "q-actions" }, buttons),
+    details);
 }
 
-$("cancel").addEventListener("click", async () => {
-  if (!confirm("Stop working on this movie?")) return;
-  await api("/api/cancel", { method: "POST" });
+function renderQueue() {
+  const q = STATE.queue;
+  $("q-wait").hidden = !q.waiting;
+  if (q.waiting) {
+    const at = new Date(q.start_at * 1000);
+    $("q-at").textContent = fmtClock(at);
+    const left = Math.round(q.start_at - Date.now() / 1000);
+    $("q-left").textContent = left > 0 ? "in " + fmtDuration(left) : "starting…";
+  }
+  $("q-disk").hidden = !q.disk_note;
+  $("q-disk").textContent = q.disk_note;
+  $("q-stop").hidden = !q.has_work;
+  $("q-clear").hidden = !q.items.some((j) => ["done", "error", "cancelled"].includes(j.state));
+  $("q-list").replaceChildren(...q.items.map((j, i) => queueRow(j, i, q.items)));
+  if (!q.items.length) $("q-list").append(el("li", { class: "q-empty hint" }, "No movies yet."));
+}
+
+$("q-new").addEventListener("click", () => go("setup"));
+$("q-now").addEventListener("click", async () => { await api("/api/start-now", { method: "POST" }); refresh(); });
+$("q-clear").addEventListener("click", async () => { await api("/api/clear", { method: "POST" }); refresh(); });
+$("q-stop").addEventListener("click", async () => {
+  if (!confirm("Stop everything? The movie being worked on is cancelled, and the ones waiting are taken off " +
+               "the to-do list (you can start them again with Try again). Reviews you've done are kept.")) return;
+  await api("/api/stop", { method: "POST" });
   refresh();
 });
 
@@ -369,12 +487,10 @@ const CATEGORY_NAMES = { fword: "F-word", strong: "Strong", mild: "Mild", blasph
 
 async function showReview() {
   show("review-screen");
-  const err = STATE.job && STATE.job.error;
-  $("r-error").hidden = !err;
-  $("r-error-msg").textContent = err || "";
-  $("r-error-log").textContent = err ? STATE.job.log.join("\n") : "";
+  const item = STATE.queue.items.find((j) => j.id === reviewId);
+  $("r-movie").textContent = item ? item.input_name : "";
   if (review) return;
-  const p = await api("/api/plan");
+  const p = await api(`/api/items/${reviewId}/plan`);
   review = { ...p, actions: {}, blur: {}, frame: {} };
   for (const v of p.visual) review.actions[v.id] = v.action === "box" ? "auto" : v.action;
   for (const w of p.words) review.actions[w.id] = w.action;
@@ -414,7 +530,7 @@ let keepTimer = null;
 const choices = () => ({ actions: review.actions, audio: segValue("r-audio"), cover: segValue("r-cover") });
 function keepChoices() {
   clearTimeout(keepTimer);
-  keepTimer = setTimeout(() => api("/api/plan", { method: "POST", body: choices() }).catch(() => { /* saved with the movie */ }), 600);
+  keepTimer = setTimeout(() => api(`/api/items/${reviewId}/plan`, { method: "POST", body: choices() }).catch(() => { /* saved with the movie */ }), 600);
 }
 
 function setAction(v, val) {
@@ -433,7 +549,7 @@ function reviewItem(v) {
   const frames = v.frames || [];
   const fi = Math.min(review.frame[v.id] || 0, Math.max(0, frames.length - 1));
   const fr = frames[fi] || { t: v.start, box: false };
-  const img = el("img", { alt: "Blurred preview", src: `/api/thumb/${v.id}?level=${level}&f=${fi}` });
+  const img = el("img", { alt: "Blurred preview", src: `/api/items/${reviewId}/thumb/${v.id}?level=${level}&f=${fi}` });
   const frame = el("div", { class: "frame" }, img);
   const thumb = el("div", { class: "thumb" + (level >= STATE.light_blur ? " light" : "") }, frame);
   img.addEventListener("load", () => {
@@ -517,10 +633,9 @@ $("r-save").addEventListener("click", async () => {
   $("r-save").disabled = true;
   try {
     clearTimeout(keepTimer);
-    await api("/api/plan", { method: "POST", body: choices() });
-    await api("/api/render", { method: "POST" });
-    review = null;
-    await refresh();
+    await api(`/api/items/${reviewId}/plan`, { method: "POST", body: choices() });
+    await api(`/api/items/${reviewId}/render`, { method: "POST" });
+    go("queue");
   } catch (e) {
     alert(e.message);
   } finally {
@@ -529,24 +644,15 @@ $("r-save").addEventListener("click", async () => {
 });
 
 $("r-cancel").addEventListener("click", async () => {
-  if (!confirm("Throw away this review and go back to the start? Nothing will be saved.")) return;
-  await api("/api/reset", { method: "POST" });
-  review = null;
-  refresh();
+  if (!confirm("Take this movie off the list? Your review is thrown away and nothing is saved.")) return;
+  await api(`/api/items/${reviewId}/remove`, { method: "POST" });
+  go("queue");
 });
-
-// ------------------------------------------------------------ done / failed
-
-$("d-again").addEventListener("click", startOver);
-$("f-again").addEventListener("click", startOver);
-async function startOver() {
-  await api("/api/reset", { method: "POST" });
-  movie = null;
-  review = null;
-  resetChoices();
-  updateSetup();
-  refresh();
-}
+$("r-back").addEventListener("click", () => {
+  clearTimeout(keepTimer);
+  if (review) api(`/api/items/${reviewId}/plan`, { method: "POST", body: choices() }).catch(() => {});
+  go("queue");
+});
 
 // ------------------------------------------------------------ updates
 
@@ -621,8 +727,7 @@ function renderUpdate() {
     el("li", {}, el("div", { class: "t" }, n.title), n.text ? el("div", { class: "d" }, n.text) : null)));
   $("u-checked").textContent = view === "news" && u.checked ? "Checked " + fmtChecked(u.checked) : "";
 
-  const job = STATE.job;
-  const busy = job && ["waiting", "analyzing", "rendering"].includes(job.state);
+  const busy = STATE.queue.has_work;
   let msg = "", cls = "";
   if (view === "updating") {
     msg = updating && Date.now() - updating.at > UPDATE_SLOW
@@ -633,9 +738,9 @@ function renderUpdate() {
     [msg, cls] = [dlgError || "Something went wrong.", "bad"];
   } else if (view === "news") {
     if (busy) {
-      msg = job.state === "waiting"
-        ? "A movie is waiting for its start time. Cancel it or let it finish before updating."
-        : "CleanCut is working on a movie. You can update once it's finished.";
+      msg = STATE.queue.waiting
+        ? "Movies are lined up for their start time. Let them finish (or click Stop all) before updating."
+        : "CleanCut is working through your movies. You can update once they're all finished.";
     } else if (u.git) {
       msg = "This copy of CleanCut is kept up to date with Git (git pull), not from here.";
     } else if (!u.helper) {
@@ -709,6 +814,19 @@ try {
 
 // ------------------------------------------------------------ main loop
 
+function go(to, id) {
+  screen = to;
+  if (to === "review") {
+    if (reviewId !== id) review = null;
+    reviewId = id;
+  } else {
+    review = null;
+  }
+  if (to === "setup") updateSetup();
+  window.scrollTo(0, 0);
+  refresh();
+}
+
 async function refresh() {
   clearTimeout(pollTimer);
   try {
@@ -718,29 +836,25 @@ async function refresh() {
     return;
   }
   renderUpdate();
-  const job = STATE.job;
-  if (!job) {
-    show("setup");
-    updateSetup();
-  } else if (job.state === "waiting") {
-    showWaiting(job);
-    pollTimer = setTimeout(refresh, 5000);
-  } else if (job.state === "analyzing" || job.state === "rendering") {
-    showWorking(job);
-    pollTimer = setTimeout(refresh, 1500);
-  } else if (job.state === "review") {
-    await showReview();
-  } else if (job.state === "done") {
-    show("done");
-    $("d-out").textContent = job.output;
-  } else {
-    show("failed");
-    const cancelled = job.state === "cancelled";
-    $("f-title").textContent = cancelled ? "Cancelled" : "Something went wrong";
-    $("f-icon").textContent = cancelled ? "×" : "!";
-    $("f-msg").textContent = cancelled ? "Nothing was saved." : job.error;
-    $("f-log").textContent = job.log.join("\n");
+  const q = STATE.queue;
+  if (screen === null) screen = q.items.length ? "queue" : "setup";
+  if (screen === "review") {
+    const item = q.items.find((j) => j.id === reviewId);
+    if (!item || !["review", "ready"].includes(item.state)) screen = "queue";
   }
+  let wait = 10000;
+  if (screen === "setup") {
+    show("setup");
+    updateWhen();
+    $("to-queue").hidden = !q.items.length;
+  } else if (screen === "queue") {
+    show("queue");
+    renderQueue();
+    wait = q.items.some((j) => j.state === "analyzing" || j.state === "rendering") ? 1500 : 5000;
+  } else {
+    await showReview();
+  }
+  pollTimer = setTimeout(refresh, wait);
 }
 
 initSetup();
