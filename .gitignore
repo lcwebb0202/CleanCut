@@ -6,3 +6,6 @@ __pycache__/
 *.wav
 .env
 tests/media/
+CLAUDE.md
+.cleancut-version
+.cleancut-files.txt

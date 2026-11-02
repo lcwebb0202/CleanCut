@@ -7,6 +7,17 @@ if not exist .env (
   echo First time setup: Notepad will open your settings file.
   echo Change MEDIA_DIR to your movie folder, save, and close Notepad.
   notepad .env
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0update.ps1" -Record >nul 2>&1
+)
+
+rem Offer a new version if there is one. An update replaces this file, so the whole check is one
+rem block (read before it runs); after an update the new copy of this file starts instead.
+if not "%~1"=="updated" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0update.ps1" -Check
+  if errorlevel 2 (
+    call "%~f0" updated
+    exit /b
+  )
 )
 
 docker info >nul 2>&1

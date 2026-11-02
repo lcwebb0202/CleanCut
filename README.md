@@ -134,9 +134,13 @@ If it's asleep at the start time, it starts as soon as the PC wakes up.
 
 - To stop CleanCut: on Windows, double-click **`Stop CleanCut`** (or quit Docker Desktop);
   on Linux, run `bash stop-cleancut.sh`.
-- To update: download the new ZIP, unzip it over the old folder (keep your `.env` file, which holds
-  your settings), then start CleanCut again the usual way. With git on Linux: `git pull`, then
-  `bash start-cleancut.sh`.
+- **Updating on Windows:** when there's a new version, `Start CleanCut` tells you, shows what's new,
+  and asks *Update now? (Y/N)*. You can also double-click **`Update CleanCut`** any time. It keeps your
+  settings (`.env`), the downloaded speech models and any review you're in the middle of, then
+  restarts CleanCut with the new version, which takes a few minutes. It won't update while CleanCut
+  is busy with a movie or waiting for its start time.
+- **Updating on Linux:** download the new ZIP and unzip it over the old folder (keep your `.env` file),
+  or with git, run `git pull`. Then run `bash start-cleancut.sh`.
 
 ## If something goes wrong
 
