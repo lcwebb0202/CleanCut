@@ -1,8 +1,9 @@
 # CleanCut's helper. It runs hidden on Windows and does what CleanCut can't do from inside Docker:
 #  - keeps the PC from going to sleep while CleanCut is waiting for its start time or working on a
 #    movie, and lets it sleep normally the rest of the time (the screen can still turn off);
-#  - checks GitHub for a new version when it starts and every day at noon, and tells the CleanCut
-#    page, which then shows "Update available" with what's new;
+#  - checks GitHub for a new version when it starts, every day at noon and when someone clicks the
+#    check button on the page, and tells the page, which shows "Update available" with what's new
+#    or "Up to date";
 #  - runs the update when someone clicks "Update now" on the page: new files (update.ps1), then a
 #    rebuild and restart of CleanCut, then it restarts itself with the new version of this file.
 #
@@ -77,7 +78,7 @@ function Update-CleanCut {
 }
 
 # Tells the page what's installed, what's new and how an update is going. The reply says whether
-# CleanCut is busy and whether someone clicked "Update now".
+# CleanCut is busy, whether someone clicked "Update now" and whether they asked for a check.
 function Send-Status {
     $body = @{ git = [bool]$info.git; current = "$($info.current)"; latest = "$($info.latest)"; news = @($info.news)
                checked = $(if ($info) { ([DateTimeOffset]$checked).ToUnixTimeSeconds() } else { 0 })
@@ -96,6 +97,11 @@ while ($true) {
     }
 
     $reply = Send-Status
+    if ($reply -and $reply.check) {
+        $new = Get-Info
+        if ($new) { $info = $new; $checked = Get-Date }
+        $reply = Send-Status
+    }
     if ($reply -and $reply.busy) {
         [void][CleanCut.Power]::SetThreadExecutionState($CONTINUOUS -bor $SYSTEM_REQUIRED)
     } else {

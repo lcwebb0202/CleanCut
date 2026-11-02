@@ -555,6 +555,8 @@ async function startOver() {
 // CleanCut; the page notices the restart and reloads itself.
 let updating = null;       // STATE.update.started when "Update now" was clicked
 let updateTimer = null;
+let checkAsked = 0;        // when the check button was clicked (ms)
+let note = null;           // {text, cls, until}: a short message in the pill ("Updated", "Couldn't check")
 
 function renderUpdate() {
   const u = STATE && STATE.update;
@@ -566,7 +568,30 @@ function renderUpdate() {
   }
   const busyUpdating = u.status === "requested" || u.status === "updating";
   if (updating && !busyUpdating) updating = null;  // it stopped without restarting: error or nothing new
-  $("upd-btn").hidden = !(u.available || busyUpdating || updating);
+  if (checkAsked && !u.checking) {
+    if (u.checked * 1000 < checkAsked - 2000) note = { text: "Couldn't check", cls: "quiet", until: Date.now() + 6000 };
+    checkAsked = 0;
+  }
+  if (note && Date.now() > note.until) note = null;
+
+  // The pill in the top right: "Update available" (click for what's new) or a greyed-out state.
+  const checking = u.checking || checkAsked > 0;
+  let label, pill = "", open = false;
+  if (updating || busyUpdating) [label, open] = ["Updating…", true];
+  else if (u.available) [label, open] = ["Update available", true];
+  else if (checking) [label, pill] = ["Checking…", "quiet"];
+  else if (note) [label, pill] = [note.text, note.cls];
+  else if (u.known) [label, pill] = ["✓ Up to date", "quiet"];
+  else [label, pill] = ["Not checked yet", "quiet"];
+  $("upd").hidden = !(u.helper || u.known || updating);
+  $("upd-label").textContent = label;
+  $("upd-btn").className = "upd-btn " + pill;
+  $("upd-btn").dataset.open = open ? "1" : "";
+  $("upd-btn").title = u.checked
+    ? "Last checked " + new Date(u.checked * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })
+    : "";
+  $("upd-check").disabled = !u.helper || checking || !!updating || busyUpdating;
+  $("upd-check").classList.toggle("spin", checking);
   $("u-news").replaceChildren(...(u.news || []).map((n) =>
     el("li", {}, el("div", { class: "t" }, n.title), n.text ? el("div", { class: "d" }, n.text) : null)));
   $("u-checked").textContent = u.checked
@@ -585,6 +610,8 @@ function renderUpdate() {
     msg = job.state === "waiting"
       ? "A movie is waiting for its start time. Cancel it or let it finish before updating."
       : "CleanCut is working on a movie. You can update once it's finished.";
+  } else if (u.git) {
+    msg = "This copy of CleanCut is kept up to date with Git (git pull), not from here.";
   } else if (!u.helper) {
     msg = "The CleanCut helper isn't running, so the update can't start from here. "
         + "Double-click \"Update CleanCut\" in your CleanCut folder instead.";
@@ -592,7 +619,7 @@ function renderUpdate() {
   $("u-msg").hidden = !msg;
   $("u-msg").className = "upd-msg " + cls;
   $("u-msg").textContent = msg;
-  $("u-go").disabled = !!(updating || busyUpdating || busy || !u.helper);
+  $("u-go").disabled = !!(updating || busyUpdating || busy || !u.helper || u.git);
   $("u-go").textContent = updating || busyUpdating ? "Updating…" : "Update now";
   $("u-later").textContent = updating || busyUpdating ? "Close" : "Later";
 }
@@ -603,10 +630,27 @@ async function pollUpdate() {
     STATE = await api("/api/state");
     renderUpdate();
   } catch (e) { /* restarting */ }
-  updateTimer = setTimeout(pollUpdate, updating ? 3000 : 60000);
+  const fast = updating || checkAsked || (STATE && STATE.update && STATE.update.checking) || note;
+  updateTimer = setTimeout(pollUpdate, fast ? 2000 : 60000);
 }
 
-$("upd-btn").addEventListener("click", () => { renderUpdate(); $("update-dlg").showModal(); });
+$("upd-btn").addEventListener("click", () => {
+  if (!$("upd-btn").dataset.open) return;  // greyed out: nothing to show
+  renderUpdate();
+  $("update-dlg").showModal();
+});
+$("upd-check").addEventListener("click", async () => {
+  checkAsked = Date.now();
+  note = null;
+  renderUpdate();
+  try {
+    await api("/api/update-check", { method: "POST" });
+  } catch (e) {
+    checkAsked = 0;
+    note = { text: "Couldn't check", cls: "quiet", until: Date.now() + 6000 };
+  }
+  pollUpdate();
+});
 $("u-close").addEventListener("click", () => $("update-dlg").close());
 $("u-later").addEventListener("click", () => $("update-dlg").close());
 $("u-go").addEventListener("click", async () => {
@@ -626,8 +670,7 @@ $("u-go").addEventListener("click", async () => {
 try {
   if (sessionStorage.getItem("cleancut.updated")) {
     sessionStorage.removeItem("cleancut.updated");
-    $("upd-done").hidden = false;
-    setTimeout(() => { $("upd-done").hidden = true; }, 15000);
+    note = { text: "✓ Updated", cls: "quiet done", until: Date.now() + 15000 };
   }
 } catch (e) { /* fine */ }
 

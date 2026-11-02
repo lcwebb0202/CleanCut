@@ -271,19 +271,20 @@ def _job() -> Job:
 
 
 # Updates. CleanCut can't update itself from inside Docker, so the CleanCut helper on Windows
-# (cleancut-helper.ps1) checks GitHub, reports here every 10 s, and runs the update when the page
-# asks for one. Copies kept with Git (Luke's) never show an update.
+# (cleancut-helper.ps1) checks GitHub, reports here every 10 s, and checks again or runs the update
+# when the page asks. Copies kept with Git (Luke's) can't be updated from the page.
 STARTED = time.time()  # changes when CleanCut restarts, which is how the page sees an update finish
 HELPER = {"seen": 0.0, "git": False, "current": "", "latest": "", "news": [], "checked": 0,
-          "status": "", "error": "", "requested": False}
+          "status": "", "error": "", "requested": False, "check": False, "check_asked": 0.0}
 HELPER_ALIVE = 40  # seconds since its last report
 
 
 def _update_info() -> dict:
     alive = time.time() - HELPER["seen"] < HELPER_ALIVE
     status = "requested" if HELPER["requested"] else HELPER["status"] if alive else ""
-    return {"available": bool(not HELPER["git"] and HELPER["current"] and HELPER["latest"]
-                              and HELPER["current"] != HELPER["latest"]),
+    return {"available": bool(HELPER["current"] and HELPER["latest"] and HELPER["current"] != HELPER["latest"]),
+            "known": bool(HELPER["current"] and HELPER["latest"]), "git": HELPER["git"],
+            "checking": alive and int(HELPER["check_asked"]) > HELPER["checked"] and time.time() - HELPER["check_asked"] < 60,
             "news": HELPER["news"], "checked": HELPER["checked"], "helper": alive,
             "status": status, "error": HELPER["error"], "started": STARTED}
 
@@ -320,9 +321,19 @@ async def helper(req: Request):
                   latest=str(body.get("latest") or ""), news=news, checked=int(body.get("checked") or 0),
                   status=str(body.get("status") or ""), error=str(body.get("error") or ""))
     update, HELPER["requested"] = HELPER["requested"], False
+    check, HELPER["check"] = HELPER["check"], False
     if update:
         HELPER["status"] = "updating"  # until the helper's next report says so itself
-    return {"busy": bool(JOB and JOB.state in BUSY), "update": update}
+    return {"busy": bool(JOB and JOB.state in BUSY), "update": update, "check": check}
+
+
+@app.post("/api/update-check")
+def update_check():
+    """The check button: ask the helper to look on GitHub now."""
+    if time.time() - HELPER["seen"] >= HELPER_ALIVE:
+        raise HTTPException(409, "The CleanCut helper isn't running, so it can't check.")
+    HELPER["check"], HELPER["check_asked"] = True, time.time()
+    return {"ok": True}
 
 
 @app.post("/api/update")
@@ -330,6 +341,8 @@ def update():
     with LOCK:
         if JOB and JOB.state in BUSY:
             raise HTTPException(409, "CleanCut is busy with a movie. You can update once it's finished.")
+        if HELPER["git"]:
+            raise HTTPException(409, "This copy of CleanCut is kept up to date with Git (git pull).")
         if time.time() - HELPER["seen"] >= HELPER_ALIVE:
             raise HTTPException(409, "The CleanCut helper isn't running. Double-click \"Update CleanCut\" "
                                      "in your CleanCut folder instead.")

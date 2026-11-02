@@ -22,8 +22,13 @@
     </svg><span>leanCut</span>
   </h1>
   <div class="sub">Makes a family-friendly copy of a movie for Jellyfin</div>
-  <button class="upd-btn" id="upd-btn" hidden><span class="upd-dot"></span>Update available</button>
-  <div class="upd-done" id="upd-done" hidden>✓ CleanCut was updated</div>
+  <div class="upd" id="upd" hidden>
+    <button class="upd-btn" id="upd-btn"><span class="upd-dot"></span><span id="upd-label">Up to date</span></button>
+    <button class="upd-check" id="upd-check" title="Check for updates" aria-label="Check for updates">
+      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2"
+           stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>
+    </button>
+  </div>
 </header>
 
 <main>

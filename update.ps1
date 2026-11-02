@@ -72,9 +72,10 @@ function Show-News($old, $new) {
     Write-Host ""
 }
 
-# Luke's own copy is kept up to date with Git, not with this.
-if (Test-Path (Join-Path $here ".git")) {
-    if ($Info) { Write-Output (@{ git = $true } | ConvertTo-Json -Compress); exit 0 }
+# Luke's own copy is kept up to date with Git, not with this. -Info still says whether it has the
+# newest version, so the page can show "Up to date".
+$isGit = Test-Path (Join-Path $here ".git")
+if ($isGit -and -not $Info) {
     if (-not $Check -and -not $Record) {
         Write-Host "This copy of CleanCut is managed with Git. Update it with: git pull"
     }
@@ -89,6 +90,14 @@ try {
     exit 1
 }
 $installed = Get-Installed
+if ($isGit) {
+    $installed = ""
+    try {
+        $installed = (& git -C $here rev-parse HEAD).Trim()
+        & git -C $here merge-base --is-ancestor $latest HEAD 2>$null
+        if ($LASTEXITCODE -eq 0) { $installed = $latest }  # has it (maybe plus newer local work)
+    } catch { }
+}
 
 if ($Record) {
     # A fresh download from GitHub is the newest version.
@@ -103,7 +112,7 @@ if ($Record) {
 if ($Info) {
     $news = @()
     if ($installed -and $installed -ne $latest) { $news = @(Get-News $installed $latest | Select-Object -First 30) }
-    Write-Output (@{ git = $false; current = $installed; latest = $latest; news = $news } | ConvertTo-Json -Compress -Depth 4)
+    Write-Output (@{ git = $isGit; current = $installed; latest = $latest; news = $news } | ConvertTo-Json -Compress -Depth 4)
     exit 0
 }
 

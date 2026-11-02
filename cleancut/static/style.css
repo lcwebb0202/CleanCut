@@ -44,17 +44,29 @@ code { font-size: .9em; background: var(--soft); padding: 1px 5px; border-radius
 .top { max-width: 1100px; margin: 0 auto; padding: 22px 16px 6px; position: relative; }
 
 /* "Update available" in the top right, and the update window */
-.upd-btn, .upd-done {
-  position: absolute; top: 22px; right: 16px; display: flex; align-items: center; gap: 8px;
-  border-radius: 999px; padding: 7px 14px; font: inherit; font-size: 14px; font-weight: 600;
+.upd { position: absolute; top: 22px; right: 16px; display: flex; align-items: center; gap: 6px; }
+.upd[hidden] { display: none; }
+.upd-btn {
+  display: flex; align-items: center; gap: 8px; border-radius: 999px; padding: 7px 14px;
+  font: inherit; font-size: 14px; font-weight: 600;
+  background: var(--soft); color: var(--accent); border: 1px solid var(--accent); cursor: pointer;
 }
-.upd-btn[hidden], .upd-done[hidden] { display: none; }
-.upd-btn { background: var(--soft); color: var(--accent); border: 1px solid var(--accent); cursor: pointer; }
 .upd-btn:hover { background: var(--accent); color: var(--accent-text); }
 .upd-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
-.upd-done { color: var(--ok); border: 1px solid var(--ok); background: var(--card); }
+/* up to date / checking / not checked: greyed out, nothing to click */
+.upd-btn.quiet { background: transparent; color: var(--muted); border-color: var(--line); cursor: default; font-weight: 500; }
+.upd-btn.quiet .upd-dot { display: none; }
+.upd-btn.done { color: var(--ok); border-color: var(--ok); }
+.upd-check {
+  width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%;
+  background: transparent; color: var(--muted); border: 1px solid var(--line); cursor: pointer;
+}
+.upd-check:hover:not(:disabled) { color: var(--text); border-color: var(--muted); }
+.upd-check:disabled { opacity: .5; cursor: default; }
+.upd-check.spin svg { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 @media (max-width: 640px) {
-  .upd-btn, .upd-done { position: static; margin-top: 10px; width: fit-content; }
+  .upd { position: static; margin-top: 10px; }
 }
 .upd-body { padding: 4px 16px 8px; overflow: auto; flex: 1; }
 .upd-intro { color: var(--muted); font-size: 14px; }
