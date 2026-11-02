@@ -41,7 +41,32 @@ body {
 [hidden] { display: none !important; }
 code { font-size: .9em; background: var(--soft); padding: 1px 5px; border-radius: 4px; }
 
-.top { max-width: 1100px; margin: 0 auto; padding: 22px 16px 6px; }
+.top { max-width: 1100px; margin: 0 auto; padding: 22px 16px 6px; position: relative; }
+
+/* "Update available" in the top right, and the update window */
+.upd-btn, .upd-done {
+  position: absolute; top: 22px; right: 16px; display: flex; align-items: center; gap: 8px;
+  border-radius: 999px; padding: 7px 14px; font: inherit; font-size: 14px; font-weight: 600;
+}
+.upd-btn[hidden], .upd-done[hidden] { display: none; }
+.upd-btn { background: var(--soft); color: var(--accent); border: 1px solid var(--accent); cursor: pointer; }
+.upd-btn:hover { background: var(--accent); color: var(--accent-text); }
+.upd-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.upd-done { color: var(--ok); border: 1px solid var(--ok); background: var(--card); }
+@media (max-width: 640px) {
+  .upd-btn, .upd-done { position: static; margin-top: 10px; width: fit-content; }
+}
+.upd-body { padding: 4px 16px 8px; overflow: auto; flex: 1; }
+.upd-intro { color: var(--muted); font-size: 14px; }
+.upd-news { margin: 0; padding-left: 20px; }
+.upd-news li { margin-bottom: 10px; }
+.upd-news .t { font-weight: 600; }
+.upd-news .d { color: var(--muted); font-size: 14px; white-space: pre-line; margin-top: 2px; }
+.upd-msg { margin: 0 16px 10px; padding: 8px 12px; border-radius: 8px; font-size: 14px;
+           background: var(--warn-bg); color: var(--warn); }
+.upd-msg.working { background: var(--soft); color: var(--text); }
+.upd-msg.bad { color: var(--bad); }
+.upd-checked { color: var(--muted); font-size: 13px; }
 .brand { margin: 0.3em 0 4px; font-size: 52px; font-weight: 700; line-height: 1; white-space: nowrap; }
 /* The C sits on the baseline like a letter; the scissors stick up above it. */
 .logo { width: 0.95em; height: 0.95em; margin: 0 -0.1em -0.112em -0.11em; vertical-align: baseline; color: var(--text); overflow: visible; }

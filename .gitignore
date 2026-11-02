@@ -9,3 +9,5 @@ tests/media/
 CLAUDE.md
 .cleancut-version
 .cleancut-files.txt
+.cleancut-update.log
+.cleancut-build.log

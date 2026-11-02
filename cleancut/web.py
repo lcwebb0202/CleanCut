@@ -270,6 +270,24 @@ def _job() -> Job:
     return JOB
 
 
+# Updates. CleanCut can't update itself from inside Docker, so the CleanCut helper on Windows
+# (cleancut-helper.ps1) checks GitHub, reports here every 10 s, and runs the update when the page
+# asks for one. Copies kept with Git (Luke's) never show an update.
+STARTED = time.time()  # changes when CleanCut restarts, which is how the page sees an update finish
+HELPER = {"seen": 0.0, "git": False, "current": "", "latest": "", "news": [], "checked": 0,
+          "status": "", "error": "", "requested": False}
+HELPER_ALIVE = 40  # seconds since its last report
+
+
+def _update_info() -> dict:
+    alive = time.time() - HELPER["seen"] < HELPER_ALIVE
+    status = "requested" if HELPER["requested"] else HELPER["status"] if alive else ""
+    return {"available": bool(not HELPER["git"] and HELPER["current"] and HELPER["latest"]
+                              and HELPER["current"] != HELPER["latest"]),
+            "news": HELPER["news"], "checked": HELPER["checked"], "helper": alive,
+            "status": status, "error": HELPER["error"], "started": STARTED}
+
+
 # ---------------------------------------------------------------- pages and settings
 
 @app.get("/")
@@ -287,7 +305,36 @@ def index():
 def state():
     return {"job": JOB.public() if JOB else None, "media_root": _show(MEDIA_ROOT),
             "default_out": {"path": DEFAULT_OUT["name"], "shown": DEFAULT_OUT["host"] or DEFAULT_OUT["path"]} if DEFAULT_OUT else None,
-            "filters": sorted(ALL_FILTERS), "blur_levels": len(BLUR_LEVELS), "light_blur": LIGHT_BLUR}
+            "filters": sorted(ALL_FILTERS), "blur_levels": len(BLUR_LEVELS), "light_blur": LIGHT_BLUR,
+            "update": _update_info()}
+
+
+@app.post("/api/helper")
+async def helper(req: Request):
+    """The CleanCut helper's report. The reply tells it whether to keep the PC awake and whether to
+    start an update."""
+    body = await req.json()
+    news = [{"title": str(n.get("title", ""))[:300], "text": str(n.get("text", ""))[:2000]}
+            for n in body.get("news") or [] if isinstance(n, dict)][:30]
+    HELPER.update(seen=time.time(), git=bool(body.get("git")), current=str(body.get("current") or ""),
+                  latest=str(body.get("latest") or ""), news=news, checked=int(body.get("checked") or 0),
+                  status=str(body.get("status") or ""), error=str(body.get("error") or ""))
+    update, HELPER["requested"] = HELPER["requested"], False
+    if update:
+        HELPER["status"] = "updating"  # until the helper's next report says so itself
+    return {"busy": bool(JOB and JOB.state in BUSY), "update": update}
+
+
+@app.post("/api/update")
+def update():
+    with LOCK:
+        if JOB and JOB.state in BUSY:
+            raise HTTPException(409, "CleanCut is busy with a movie. You can update once it's finished.")
+        if time.time() - HELPER["seen"] >= HELPER_ALIVE:
+            raise HTTPException(409, "The CleanCut helper isn't running. Double-click \"Update CleanCut\" "
+                                     "in your CleanCut folder instead.")
+        HELPER["requested"], HELPER["error"] = True, ""
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------- choosing files
@@ -378,6 +425,8 @@ async def start(req: Request):
     with LOCK:
         if JOB and JOB.state in BUSY:
             raise HTTPException(409, "A movie is already being processed.")
+        if _update_info()["status"] in ("requested", "updating"):
+            raise HTTPException(409, "CleanCut is updating. Try again once the page has refreshed.")
         input_path = _real(body["input"])
         out_dir = _real(body.get("out_dir", ""))
         if not os.path.isfile(input_path):

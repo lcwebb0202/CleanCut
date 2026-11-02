@@ -22,6 +22,8 @@
     </svg><span>leanCut</span>
   </h1>
   <div class="sub">Makes a family-friendly copy of a movie for Jellyfin</div>
+  <button class="upd-btn" id="upd-btn" hidden><span class="upd-dot"></span>Update available</button>
+  <div class="upd-done" id="upd-done" hidden>✓ CleanCut was updated</div>
 </header>
 
 <main>
@@ -224,6 +226,25 @@
     <button class="btn" id="b-newfolder">New folder</button>
     <div class="grow"></div>
     <button class="btn primary" id="b-use">Use this folder</button>
+  </div>
+</dialog>
+
+<!-- new version -->
+<dialog id="update-dlg">
+  <div class="dlg-head">
+    <h3>A new version of CleanCut is ready</h3>
+    <button class="x" id="u-close" aria-label="Close">×</button>
+  </div>
+  <div class="upd-body">
+    <p class="upd-intro">Here's what's new. Updating keeps your settings and folders, and takes a few minutes.</p>
+    <ul class="upd-news" id="u-news"></ul>
+  </div>
+  <div class="upd-msg" id="u-msg" hidden></div>
+  <div class="dlg-foot">
+    <span class="upd-checked" id="u-checked"></span>
+    <div class="grow"></div>
+    <button class="btn" id="u-later">Later</button>
+    <button class="btn primary" id="u-go">Update now</button>
   </div>
 </dialog>
 

@@ -548,6 +548,89 @@ async function startOver() {
   refresh();
 }
 
+// ------------------------------------------------------------ updates
+
+// The CleanCut helper on Windows checks GitHub at noon each day; when there's a new version the
+// button in the top right shows. Clicking "Update now" asks the helper to update, which restarts
+// CleanCut; the page notices the restart and reloads itself.
+let updating = null;       // STATE.update.started when "Update now" was clicked
+let updateTimer = null;
+
+function renderUpdate() {
+  const u = STATE && STATE.update;
+  if (!u) return;
+  if (updating && u.started !== updating) {  // CleanCut restarted with the new version
+    try { sessionStorage.setItem("cleancut.updated", "1"); } catch (e) { /* fine */ }
+    location.reload();
+    return;
+  }
+  const busyUpdating = u.status === "requested" || u.status === "updating";
+  if (updating && !busyUpdating) updating = null;  // it stopped without restarting: error or nothing new
+  $("upd-btn").hidden = !(u.available || busyUpdating || updating);
+  $("u-news").replaceChildren(...(u.news || []).map((n) =>
+    el("li", {}, el("div", { class: "t" }, n.title), n.text ? el("div", { class: "d" }, n.text) : null)));
+  $("u-checked").textContent = u.checked
+    ? "Checked " + new Date(u.checked * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })
+    : "";
+  const job = STATE.job;
+  const busy = job && ["waiting", "analyzing", "rendering"].includes(job.state);
+  let msg = "", cls = "";
+  if (updating || busyUpdating) {
+    msg = "Updating… CleanCut will restart in a few minutes, and this page will refresh by itself.";
+    cls = "working";
+  } else if (u.status === "error") {
+    msg = "The update didn't work: " + u.error;
+    cls = "bad";
+  } else if (busy) {
+    msg = job.state === "waiting"
+      ? "A movie is waiting for its start time. Cancel it or let it finish before updating."
+      : "CleanCut is working on a movie. You can update once it's finished.";
+  } else if (!u.helper) {
+    msg = "The CleanCut helper isn't running, so the update can't start from here. "
+        + "Double-click \"Update CleanCut\" in your CleanCut folder instead.";
+  }
+  $("u-msg").hidden = !msg;
+  $("u-msg").className = "upd-msg " + cls;
+  $("u-msg").textContent = msg;
+  $("u-go").disabled = !!(updating || busyUpdating || busy || !u.helper);
+  $("u-go").textContent = updating || busyUpdating ? "Updating…" : "Update now";
+  $("u-later").textContent = updating || busyUpdating ? "Close" : "Later";
+}
+
+async function pollUpdate() {
+  clearTimeout(updateTimer);
+  try {
+    STATE = await api("/api/state");
+    renderUpdate();
+  } catch (e) { /* restarting */ }
+  updateTimer = setTimeout(pollUpdate, updating ? 3000 : 60000);
+}
+
+$("upd-btn").addEventListener("click", () => { renderUpdate(); $("update-dlg").showModal(); });
+$("u-close").addEventListener("click", () => $("update-dlg").close());
+$("u-later").addEventListener("click", () => $("update-dlg").close());
+$("u-go").addEventListener("click", async () => {
+  try {
+    await api("/api/update", { method: "POST" });
+    updating = STATE.update.started;
+  } catch (e) {
+    $("u-msg").hidden = false;
+    $("u-msg").className = "upd-msg bad";
+    $("u-msg").textContent = e.message;
+    return;
+  }
+  renderUpdate();
+  pollUpdate();
+});
+
+try {
+  if (sessionStorage.getItem("cleancut.updated")) {
+    sessionStorage.removeItem("cleancut.updated");
+    $("upd-done").hidden = false;
+    setTimeout(() => { $("upd-done").hidden = true; }, 15000);
+  }
+} catch (e) { /* fine */ }
+
 // ------------------------------------------------------------ main loop
 
 async function refresh() {
@@ -558,6 +641,7 @@ async function refresh() {
     pollTimer = setTimeout(refresh, 3000);
     return;
   }
+  renderUpdate();
   const job = STATE.job;
   if (!job) {
     show("setup");
@@ -585,3 +669,4 @@ async function refresh() {
 
 initSetup();
 refresh();
+updateTimer = setTimeout(pollUpdate, 60000);

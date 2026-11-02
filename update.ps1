@@ -4,10 +4,12 @@
 #   "Update CleanCut" runs this with no options: update now if there's anything new.
 #   "Start CleanCut" runs it with -Check: if there's a newer version, say so and ask.
 #   -Record (first-time setup): note that this folder holds the newest version.
+#   -Info (the CleanCut helper, for the page's "Update available" button): print what's installed,
+#    what's newest and what's new, as JSON.
 #
 # Exit codes: 0 = nothing changed, 1 = something went wrong, 2 = updated (the caller restarts
 # CleanCut, which rebuilds it). Only files that came from GitHub are ever replaced or removed.
-param([switch]$Check, [switch]$Record, [switch]$NoPause)
+param([switch]$Check, [switch]$Record, [switch]$Info, [switch]$NoPause)
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"  # the progress bar makes downloads very slow in 5.1
@@ -41,24 +43,38 @@ function Get-RepoFiles($sha) {
     @($tree.tree | Where-Object { $_.type -eq "blob" } | ForEach-Object { $_.path })
 }
 
-function Show-News($old, $new) {
+# The changes between two versions, newest first: each commit's first line as the title and the
+# rest (without the co-author line) as the description.
+function Get-News($old, $new) {
     $commits = @()
     if ($old) {
         try { $commits = @((Get-GitHub "$api/compare/$old...$new").commits) } catch { }
-        [array]::Reverse($commits)  # newest first
+        [array]::Reverse($commits)
     }
     if (-not $commits) { $commits = @(Get-GitHub "$api/commits?sha=$new&per_page=5") }
+    @($commits | ForEach-Object {
+        $lines = @(($_.commit.message -replace "`r", "") -split "`n")
+        $body = ($lines[1..($lines.Count)] | Where-Object { $_ -notmatch "^Co-Authored-By:" }) -join "`n"
+        $body = $body.Trim() -replace "(?<!
+)
+(?![
+-])", " "  # re-join wrapped lines, keep paragraphs and lists
+        [pscustomobject]@{ title = $lines[0].Trim(); text = $body }
+    })
+}
+
+function Show-News($old, $new) {
+    $news = @(Get-News $old $new)
     Write-Host ""
     Write-Host "What's new:"
-    $commits | Select-Object -First 15 | ForEach-Object {
-        Write-Host ("  - " + ($_.commit.message -split "`n")[0])
-    }
-    if ($commits.Count -gt 15) { Write-Host "  ...and $($commits.Count - 15) more" }
+    $news | Select-Object -First 15 | ForEach-Object { Write-Host ("  - " + $_.title) }
+    if ($news.Count -gt 15) { Write-Host "  ...and $($news.Count - 15) more" }
     Write-Host ""
 }
 
 # Luke's own copy is kept up to date with Git, not with this.
 if (Test-Path (Join-Path $here ".git")) {
+    if ($Info) { Write-Output (@{ git = $true } | ConvertTo-Json -Compress); exit 0 }
     if (-not $Check -and -not $Record) {
         Write-Host "This copy of CleanCut is managed with Git. Update it with: git pull"
     }
@@ -68,7 +84,7 @@ if (Test-Path (Join-Path $here ".git")) {
 try {
     $latest = (Get-GitHub "$api/commits/main").sha
 } catch {
-    if ($Check) { exit 0 }  # no internet: just start as usual
+    if ($Check -or $Info) { exit 0 }  # no internet: just start as usual / try again later
     Write-Host "Couldn't reach GitHub to check for a new version. Check the internet connection and try again."
     exit 1
 }
@@ -81,6 +97,13 @@ if ($Record) {
         $files = Get-RepoFiles $latest | Where-Object { Test-Path -LiteralPath (Join-Path $here $_) }
         Set-Content $filesList $files -Encoding UTF8
     } catch { }
+    exit 0
+}
+
+if ($Info) {
+    $news = @()
+    if ($installed -and $installed -ne $latest) { $news = @(Get-News $installed $latest | Select-Object -First 30) }
+    Write-Output (@{ git = $false; current = $installed; latest = $latest; news = $news } | ConvertTo-Json -Compress -Depth 4)
     exit 0
 }
 

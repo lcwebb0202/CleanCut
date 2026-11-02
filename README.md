@@ -123,22 +123,27 @@ Don't rename the original to `... - Original`: Jellyfin sorts version names alph
 If the PC goes to sleep while CleanCut is working, it stops and you have to start that movie again.
 If it's asleep at the start time, it starts as soon as the PC wakes up.
 - **Windows:** CleanCut keeps the PC awake by itself while a movie is waiting for its start time or being
-  worked on, and lets it sleep normally the rest of the time (the screen can still turn off). This is set
-  up the first time you double-click `Start CleanCut` and then runs hidden every time you sign in.
+  worked on, and lets it sleep normally the rest of the time (the screen can still turn off). A small
+  hidden helper does this. It's set up the first time you double-click `Start CleanCut` and then runs
+  every time you sign in.
   Two things it can't stop: **closing a laptop's lid** (leave it open, or set *"When I close the lid"* to
   *Do nothing* while plugged in, in Control Panel → Power Options) and running out of battery (plug it in).
-  To turn it off, delete *CleanCut keep-awake* from your Startup folder (press Win+R, type `shell:startup`).
+  To turn it off, delete *CleanCut helper* from your Startup folder (press Win+R, type `shell:startup`).
+  That also turns off the update button below.
 - **Linux:** turn off automatic suspend in your desktop's power settings. Servers usually don't sleep anyway.
 
 ## Stopping and updating
 
 - To stop CleanCut: on Windows, double-click **`Stop CleanCut`** (or quit Docker Desktop);
   on Linux, run `bash stop-cleancut.sh`.
-- **Updating on Windows:** when there's a new version, `Start CleanCut` tells you, shows what's new,
-  and asks *Update now? (Y/N)*. You can also double-click **`Update CleanCut`** any time. It keeps your
-  settings (`.env`), the downloaded speech models and any review you're in the middle of, then
-  restarts CleanCut with the new version, which takes a few minutes. It won't update while CleanCut
-  is busy with a movie or waiting for its start time.
+- **Updating on Windows:** CleanCut checks for a new version every day at noon (and when you sign in).
+  When there is one, an **Update available** button appears in the top right of the CleanCut page.
+  Click it to see what's new, then click **Update now**. CleanCut restarts with the new version in a
+  few minutes and the page refreshes by itself. Your settings (`.env`), the downloaded speech models
+  and any review you're in the middle of are kept. It won't update while CleanCut is busy with a
+  movie or waiting for its start time.
+  `Start CleanCut` also mentions new versions, and double-clicking **`Update CleanCut`** does the same
+  update by hand (useful if the button says the helper isn't running).
 - **Updating on Linux:** download the new ZIP and unzip it over the old folder (keep your `.env` file),
   or with git, run `git pull`. Then run `bash start-cleancut.sh`.
 
