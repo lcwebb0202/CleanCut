@@ -45,7 +45,8 @@ $SYSTEM_REQUIRED = [uint32]"0x00000001"
 $log = Join-Path $here ".cleancut-update.log"
 $info = $null          # what update.ps1 -Info said last
 $checked = [datetime]::MinValue
-$status = ""           # "" / "updating" / "error"
+$status = ""           # "" / "updating" / "error" / "current" (nothing to install, for 30 s)
+$currentUntil = [datetime]::MinValue
 $problem = ""
 
 function Get-Info {
@@ -118,9 +119,16 @@ while ($true) {
             Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "$psArgs -Restarted"
             exit 0
         }
-        $status = $(if ($result) { "error" } else { "" }); $problem = $result
         $new = Get-Info
         if ($new) { $info = $new; $checked = Get-Date }
+        if ($result) {
+            $status = "error"; $problem = $result
+        } else {
+            # Nothing to install: this folder has the newest version, whatever an older answer said.
+            $status = "current"; $problem = ""; $currentUntil = (Get-Date).AddSeconds(30)
+            if ($info) { $info.current = $info.latest; $info.news = @() }
+        }
     }
+    if ($status -eq "current" -and (Get-Date) -gt $currentUntil) { $status = "" }
     Start-Sleep -Seconds 10
 }

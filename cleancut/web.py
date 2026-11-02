@@ -277,6 +277,7 @@ STARTED = time.time()  # changes when CleanCut restarts, which is how the page s
 HELPER = {"seen": 0.0, "git": False, "current": "", "latest": "", "news": [], "checked": 0,
           "status": "", "error": "", "requested": False, "check": False, "check_asked": 0.0}
 HELPER_ALIVE = 40  # seconds since its last report
+HELPER_LOG: list[str] = []  # its recent reports, for looking into update problems (/api/helper-log)
 
 
 def _update_info() -> dict:
@@ -320,6 +321,10 @@ async def helper(req: Request):
     HELPER.update(seen=time.time(), git=bool(body.get("git")), current=str(body.get("current") or ""),
                   latest=str(body.get("latest") or ""), news=news, checked=int(body.get("checked") or 0),
                   status=str(body.get("status") or ""), error=str(body.get("error") or ""))
+    line = (f'{time.strftime("%H:%M:%S")} current={HELPER["current"][:7]} latest={HELPER["latest"][:7]} '
+            f'news={len(news)} status={HELPER["status"]!r} error={HELPER["error"][:80]!r}')
+    if not HELPER_LOG or HELPER_LOG[-1][9:] != line[9:]:
+        HELPER_LOG[:] = HELPER_LOG[-49:] + [line]
     update, HELPER["requested"] = HELPER["requested"], False
     check, HELPER["check"] = HELPER["check"], False
     if update:
@@ -334,6 +339,11 @@ def update_check():
         raise HTTPException(409, "The CleanCut helper isn't running, so it can't check.")
     HELPER["check"], HELPER["check_asked"] = True, time.time()
     return {"ok": True}
+
+
+@app.get("/api/helper-log")
+def helper_log():
+    return Response("\n".join(HELPER_LOG) + "\n", media_type="text/plain")
 
 
 @app.post("/api/update")

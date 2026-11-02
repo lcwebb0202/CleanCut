@@ -550,79 +550,106 @@ async function startOver() {
 
 // ------------------------------------------------------------ updates
 
-// The CleanCut helper on Windows checks GitHub at noon each day; when there's a new version the
-// button in the top right shows. Clicking "Update now" asks the helper to update, which restarts
-// CleanCut; the page notices the restart and reloads itself.
-let updating = null;       // STATE.update.started when "Update now" was clicked
+// The CleanCut helper on Windows checks GitHub at noon each day (or when the round arrow is
+// clicked); when there's a new version the pill in the top right says so. "Update now" asks the
+// helper to update, which restarts CleanCut; the page notices the restart, reloads itself and
+// says it's up to date. Once an update has started the window never goes back to "Update now":
+// it ends on "up to date" or on what went wrong.
+let updating = null;       // {started: STATE.update.started, at: ms} once "Update now" was clicked
 let updateTimer = null;
-let checkAsked = 0;        // when the check button was clicked (ms)
+let checkAsked = 0;        // when the round arrow was clicked (ms)
 let note = null;           // {text, cls, until}: a short message in the pill ("Updated", "Couldn't check")
+let dlgView = "news";      // the update window shows: "news" / "updating" / "done" / "current" / "error"
+let dlgError = "";
+const UPDATE_SLOW = 20 * 60 * 1000;
+
+function fmtChecked(sec) {
+  return new Date(sec * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+}
 
 function renderUpdate() {
   const u = STATE && STATE.update;
   if (!u) return;
-  if (updating && u.started !== updating) {  // CleanCut restarted with the new version
-    try { sessionStorage.setItem("cleancut.updated", "1"); } catch (e) { /* fine */ }
-    location.reload();
-    return;
+  if (updating) {
+    if (u.started !== updating.started) {  // CleanCut restarted with the new version
+      try { sessionStorage.setItem("cleancut.updated", "1"); } catch (e) { /* fine */ }
+      location.reload();
+      return;
+    }
+    if (u.status === "error") [updating, dlgView, dlgError] = [null, "error", u.error];
+    else if (u.status === "current") [updating, dlgView] = [null, "current"];
   }
-  const busyUpdating = u.status === "requested" || u.status === "updating";
-  if (updating && !busyUpdating) updating = null;  // it stopped without restarting: error or nothing new
   if (checkAsked && !u.checking) {
     if (u.checked * 1000 < checkAsked - 2000) note = { text: "Couldn't check", cls: "quiet", until: Date.now() + 6000 };
     checkAsked = 0;
   }
   if (note && Date.now() > note.until) note = null;
+  const busyUpdating = !!updating || u.status === "requested" || u.status === "updating";
 
   // The pill in the top right: "Update available" (click for what's new) or a greyed-out state.
   const checking = u.checking || checkAsked > 0;
   let label, pill = "", open = false;
-  if (updating || busyUpdating) [label, open] = ["Updating…", true];
-  else if (u.available) [label, open] = ["Update available", true];
-  else if (checking) [label, pill] = ["Checking…", "quiet"];
+  if (busyUpdating) [label, open] = ["Updating…", true];
   else if (note) [label, pill] = [note.text, note.cls];
+  else if (checking) [label, pill] = ["Checking…", "quiet"];
+  else if (u.available) [label, open] = ["Update available", true];
   else if (u.known) [label, pill] = ["✓ Up to date", "quiet"];
   else [label, pill] = ["Not checked yet", "quiet"];
-  $("upd").hidden = !(u.helper || u.known || updating);
+  $("upd").hidden = !(u.helper || u.known || busyUpdating || note);
   $("upd-label").textContent = label;
   $("upd-btn").className = "upd-btn " + pill;
   $("upd-btn").dataset.open = open ? "1" : "";
-  $("upd-btn").title = u.checked
-    ? "Last checked " + new Date(u.checked * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })
-    : "";
-  $("upd-check").disabled = !u.helper || checking || !!updating || busyUpdating;
+  $("upd-btn").title = u.checked ? "Last checked " + fmtChecked(u.checked) : "";
+  $("upd-check").disabled = !u.helper || checking || busyUpdating;
   $("upd-check").classList.toggle("spin", checking);
+
+  // The update window.
+  if (busyUpdating) dlgView = "updating";
+  else if (dlgView === "updating") dlgView = u.available ? "news" : "current";
+  const view = dlgView;
+  const finished = view === "done" || view === "current";
+  $("u-title").textContent = finished ? "✓ CleanCut is up to date"
+    : view === "error" ? "The update didn't work" : "A new version of CleanCut is ready";
+  $("u-intro").textContent = view === "done" ? "The update is installed. You're on the newest version of CleanCut."
+    : view === "current" ? "There was nothing new to install. You're on the newest version of CleanCut."
+    : view === "error" ? "Nothing was changed. You can keep using CleanCut as it is and try again later."
+    : view === "updating" ? "Installing the new version. This takes a few minutes."
+    : "Here's what's new. Updating keeps your settings and folders, and takes a few minutes.";
   const news = u.news && u.news.length ? u.news : [{ title: "Improvements and fixes", text: "" }];
+  $("u-news").hidden = finished || view === "error";
   $("u-news").replaceChildren(...news.map((n) =>
     el("li", {}, el("div", { class: "t" }, n.title), n.text ? el("div", { class: "d" }, n.text) : null)));
-  $("u-checked").textContent = u.checked
-    ? "Checked " + new Date(u.checked * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })
-    : "";
+  $("u-checked").textContent = view === "news" && u.checked ? "Checked " + fmtChecked(u.checked) : "";
+
   const job = STATE.job;
   const busy = job && ["waiting", "analyzing", "rendering"].includes(job.state);
   let msg = "", cls = "";
-  if (updating || busyUpdating) {
-    msg = "Updating… CleanCut will restart in a few minutes, and this page will refresh by itself.";
+  if (view === "updating") {
+    msg = updating && Date.now() - updating.at > UPDATE_SLOW
+      ? "This is taking longer than usual. Leave it running; this page will refresh by itself when it's done."
+      : "Updating… CleanCut will restart in a few minutes, and this page will refresh by itself.";
     cls = "working";
-  } else if (u.status === "error") {
-    msg = "The update didn't work: " + u.error;
-    cls = "bad";
-  } else if (busy) {
-    msg = job.state === "waiting"
-      ? "A movie is waiting for its start time. Cancel it or let it finish before updating."
-      : "CleanCut is working on a movie. You can update once it's finished.";
-  } else if (u.git) {
-    msg = "This copy of CleanCut is kept up to date with Git (git pull), not from here.";
-  } else if (!u.helper) {
-    msg = "The CleanCut helper isn't running, so the update can't start from here. "
-        + "Double-click \"Update CleanCut\" in your CleanCut folder instead.";
+  } else if (view === "error") {
+    [msg, cls] = [dlgError || "Something went wrong.", "bad"];
+  } else if (view === "news") {
+    if (busy) {
+      msg = job.state === "waiting"
+        ? "A movie is waiting for its start time. Cancel it or let it finish before updating."
+        : "CleanCut is working on a movie. You can update once it's finished.";
+    } else if (u.git) {
+      msg = "This copy of CleanCut is kept up to date with Git (git pull), not from here.";
+    } else if (!u.helper) {
+      msg = "The CleanCut helper isn't running, so the update can't start from here. "
+          + "Double-click \"Update CleanCut\" in your CleanCut folder instead.";
+    }
   }
   $("u-msg").hidden = !msg;
   $("u-msg").className = "upd-msg " + cls;
   $("u-msg").textContent = msg;
-  $("u-go").disabled = !!(updating || busyUpdating || busy || !u.helper || u.git);
-  $("u-go").textContent = updating || busyUpdating ? "Updating…" : "Update now";
-  $("u-later").textContent = updating || busyUpdating ? "Close" : "Later";
+  $("u-go").hidden = view !== "news" && view !== "updating";
+  $("u-go").disabled = view === "updating" || busy || !u.helper || u.git;
+  $("u-go").textContent = view === "updating" ? "Updating…" : "Update now";
+  $("u-later").textContent = view === "news" ? "Later" : view === "updating" ? "Close" : "OK";
 }
 
 async function pollUpdate() {
@@ -654,10 +681,12 @@ $("upd-check").addEventListener("click", async () => {
 });
 $("u-close").addEventListener("click", () => $("update-dlg").close());
 $("u-later").addEventListener("click", () => $("update-dlg").close());
+// Closed: next time it opens on what's new (unless an update is still running).
+$("update-dlg").addEventListener("close", () => { if (dlgView !== "updating") dlgView = "news"; });
 $("u-go").addEventListener("click", async () => {
   try {
     await api("/api/update", { method: "POST" });
-    updating = STATE.update.started;
+    updating = { started: STATE.update.started, at: Date.now() };
   } catch (e) {
     $("u-msg").hidden = false;
     $("u-msg").className = "upd-msg bad";
@@ -668,10 +697,13 @@ $("u-go").addEventListener("click", async () => {
   pollUpdate();
 });
 
+// Just restarted after an update: say so, and that it's up to date.
 try {
   if (sessionStorage.getItem("cleancut.updated")) {
     sessionStorage.removeItem("cleancut.updated");
     note = { text: "✓ Updated", cls: "quiet done", until: Date.now() + 15000 };
+    dlgView = "done";
+    $("update-dlg").showModal();
   }
 } catch (e) { /* fine */ }
 
