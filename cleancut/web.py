@@ -22,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from . import language, scenes
 from .media import probe
 from .nudity import HDR_TRANSFERS, TONEMAP
-from .pipeline import ALL_FILTERS, CLEAN_SUFFIX, jellyfin_note, load_plan, output_name, save_plan
+from .pipeline import ALL_FILTERS, OUTPUT_SUFFIX, jellyfin_note, load_plan, output_name, save_plan
 
 MEDIA_ROOT = os.path.realpath(os.environ.get("MEDIA_ROOT", "/media"))
 UPLOAD_DIR = os.path.join(MEDIA_ROOT, "CleanCut Uploads")
@@ -307,7 +307,7 @@ def browse(path: str = ""):
             continue
         if e.is_dir():
             dirs.append(e.name)
-        elif os.path.splitext(e.name)[1].lower() in VIDEO_EXTS and not e.name.endswith((CLEAN_SUFFIX + ".mkv", " - Filtered.mkv")):
+        elif os.path.splitext(e.name)[1].lower() in VIDEO_EXTS and not e.name.endswith((OUTPUT_SUFFIX + ".mkv", " - Clean.mkv")):
             files.append({"name": e.name, "size": e.stat().st_size})
     at_root = real == _root_of(real)["path"]
     parent = ("" if len(ROOTS) > 1 else None) if at_root else _rel(os.path.dirname(real))
@@ -316,7 +316,7 @@ def browse(path: str = ""):
 
 @app.get("/api/output")
 def output_info(input: str, out_dir: str):
-    """The file name the clean copy will get, and a note if Jellyfin wouldn't group it with the original."""
+    """The file name the filtered copy will get, and a note if Jellyfin wouldn't group it with the original."""
     path, out = _real(input), _real(out_dir)
     folder = os.path.basename(_show(os.path.dirname(path)).rstrip("/\\"))  # real name, not "media"
     return {"name": output_name(path), "note": jellyfin_note(path, out, folder)}
@@ -395,7 +395,7 @@ async def start(req: Request):
             raise HTTPException(400, "That start time doesn't look right.")
         if start_at > time.time() + 7 * 86400:
             raise HTTPException(400, "Pick a start time within the next week.")
-        JOB = Job(input_path, out_dir, filters, cover, audio, bool(body.get("review", True)), start_at)
+        JOB = Job(input_path, out_dir, filters, cover, audio, bool(body.get("review", False)), start_at)
         JOB.save()
         threading.Thread(target=JOB.analyze, daemon=True).start()
     return JOB.public()

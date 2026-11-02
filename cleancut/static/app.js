@@ -93,19 +93,19 @@ function initSetup() {
   document.querySelectorAll('input[name="f"]').forEach((c) => (c.checked = filters.includes(c.value)));
   setSeg("audio", load("audio", "mute"));
   setSeg("cover", load("cover", "box"));
-  $("review").checked = load("review", true);
   outDir = load("outDir2", null);
-  resetWhen();
+  resetChoices();
   updateSetup();
 }
 
-// When to start: always back to 2 AM and "not right away" (on purpose not remembered, so an
-// overnight run is the default every time).
+// When to start and review: always back to 2 AM, "not right away" and no review (on purpose not
+// remembered, so an unattended overnight run is the default every time).
 const DEFAULT_START = "02:00";
 
-function resetWhen() {
+function resetChoices() {
   $("start-time").value = DEFAULT_START;
   $("start-now").checked = false;
+  $("review").checked = false;
 }
 
 function fmtClock(date) {
@@ -241,7 +241,7 @@ $("start").addEventListener("click", async () => {
     filters, audio: segValue("audio"), cover: segValue("cover"), review: $("review").checked,
     start_at: $("start-now").checked ? 0 : nextStart().getTime() / 1000,
   };
-  save("filters2", filters); save("audio", body.audio); save("cover", body.cover); save("review", body.review);
+  save("filters2", filters); save("audio", body.audio); save("cover", body.cover);
   $("start").disabled = true;
   $("start-error").textContent = "";
   try {
@@ -543,7 +543,7 @@ async function startOver() {
   await api("/api/reset", { method: "POST" });
   movie = null;
   review = null;
-  resetWhen();
+  resetChoices();
   updateSetup();
   refresh();
 }

@@ -86,17 +86,17 @@ filtered copies land right next to the originals.
 5. Click **Start**. A full movie usually takes a few hours (see below). You can close the browser;
    it keeps going (or keeps waiting for its start time). While it waits you can still click
    **Start now instead** or **Cancel**.
-6. If you left *review* on, look over the blurred pictures, change anything you want, and click
-   **Save filtered movie**. For a movie that's ready by morning without you, untick review.
+6. Review is off unless you tick it, so the movie is saved by morning without you. If you ticked
+   *review*, look over the blurred pictures, change anything you want, and click **Save filtered movie**.
 
 ### The new file and Jellyfin
 
-The new file gets the original's full name plus ` - Clean`, for example
-`Deadpool (2016) [imdbid-tt1431045] - [Bluray-1080p][EAC3 5.1][x264]-hallowed - Clean.mkv`.
+The new file gets the original's full name plus ` - Filtered`, for example
+`Deadpool (2016) [imdbid-tt1431045] - [Bluray-1080p][EAC3 5.1][x264]-hallowed - Filtered.mkv`.
 The original is never renamed or changed.
 
 Saved **in the same folder as the original**, Jellyfin shows the two as one movie with two versions:
-the original stays the one that plays by default, and the copy appears in the version menu as **Clean**.
+the original stays the one that plays by default, and the copy appears in the version menu as **Filtered**.
 (Tested on Jellyfin 12.4.) This works when each movie has its own folder and the file name starts with
 the folder name, followed by ` - ` or nothing, which is how Radarr names files by default:
 
@@ -108,7 +108,7 @@ the folder name, followed by ` - ` or nothing, which is how Radarr names files b
 
 CleanCut checks this before you start and shows a yellow note if Jellyfin wouldn't group them.
 Don't rename the original to `... - Original`: Jellyfin sorts version names alphabetically, so
-"Clean" would then come first and become the default.
+"Filtered" would then come first and become the default.
 
 ### How long it takes
 
