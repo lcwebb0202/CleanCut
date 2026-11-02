@@ -137,7 +137,8 @@ If it's asleep at the start time, it starts as soon as the PC wakes up.
 - To stop CleanCut: on Windows, double-click **`Stop CleanCut`** (or quit Docker Desktop);
   on Linux, run `bash stop-cleancut.sh`.
 - **Updating on Windows:** CleanCut checks for a new version every day at noon (and when you sign in).
-  When there is one, an **Update available** button appears in the top right of the CleanCut page.
+  When there is one, the button in the top right of the CleanCut page changes from a greyed-out
+  **Up to date** to **Update available**. To check right away, click the round arrow next to it.
   Click it to see what's new, then click **Update now**. CleanCut restarts with the new version in a
   few minutes and the page refreshes by itself. Your settings (`.env`), the downloaded speech models
   and any review you're in the middle of are kept. It won't update while CleanCut is busy with a
