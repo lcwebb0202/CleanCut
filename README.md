@@ -80,11 +80,14 @@ filtered copies land right next to the originals.
 
 1. Open **http://localhost:8800**. (On Windows, start **Docker Desktop** first, or just double-click `Start CleanCut`.)
 2. Drag a movie onto the page, or click *pick one from your media folder*.
-3. Tick what to filter, choose where to save, and click **Start**.
-4. Wait. A full movie usually takes a few hours (see below), so it's best to run it overnight.
-   You can close the browser; it keeps going.
-5. If you left *review* on, look over the blurred pictures, change anything you want, and click
-   **Save filtered movie**.
+3. Tick what to filter and choose where to save.
+4. **When to start:** it starts at **2:00 AM** unless you change it. Pick any other time, or tick
+   **Start right away**. It goes back to 2:00 AM every time you open the page.
+5. Click **Start**. A full movie usually takes a few hours (see below). You can close the browser;
+   it keeps going (or keeps waiting for its start time). While it waits you can still click
+   **Start now instead** or **Cancel**.
+6. If you left *review* on, look over the blurred pictures, change anything you want, and click
+   **Save filtered movie**. For a movie that's ready by morning without you, untick review.
 
 ### The new file and Jellyfin
 
@@ -116,7 +119,8 @@ Don't rename the original to `... - Original`: Jellyfin sorts version names alph
 
 ### For overnight runs: stop the PC from sleeping
 
-If the PC goes to sleep, CleanCut stops and you have to start that movie again.
+If the PC goes to sleep while CleanCut is working, it stops and you have to start that movie again.
+If it's asleep at the start time, it starts as soon as the PC wakes up.
 - **Windows:** go to **Settings → System → Power** (or *Power & battery*) → **Screen, sleep & hibernate timeouts**,
   and set **"Put my device to sleep after"** to **Never** while plugged in. Laptops need to be plugged in.
 - **Linux:** turn off automatic suspend in your desktop's power settings. Servers usually don't sleep anyway.

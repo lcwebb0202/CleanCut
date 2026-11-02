@@ -109,7 +109,8 @@ def _show(path: str) -> str:
 # ---------------------------------------------------------------- the job
 
 class Job:
-    def __init__(self, input_path: str, out_dir: str, filters: list[str], cover: str, audio: str, review: bool):
+    def __init__(self, input_path: str, out_dir: str, filters: list[str], cover: str, audio: str, review: bool,
+                 start_at: float = 0.0):
         self.input = input_path
         self.out_dir = out_dir
         self.filters = filters
@@ -119,8 +120,10 @@ class Job:
         stem = os.path.splitext(os.path.basename(input_path))[0]
         self.workdir = os.path.join(WORK_ROOT, stem)
         self.output = os.path.join(out_dir, output_name(input_path))
-        self.state = "analyzing"  # analyzing, review, rendering, done, error, cancelled
-        self.stage = "Starting"
+        self.start_at = start_at  # when to begin (epoch seconds); 0 = right away
+        self.state = "waiting" if start_at > time.time() else "analyzing"
+        # waiting, analyzing, review, rendering, done, error, cancelled
+        self.stage = "Waiting to start" if self.state == "waiting" else "Starting"
         self.pct = 0.0
         self.log: list[str] = []
         self.error = ""
@@ -130,7 +133,7 @@ class Job:
         self.cancelled = False
 
     SAVED = ("input", "out_dir", "filters", "cover", "audio", "review", "workdir", "output", "state", "stage",
-             "pct", "log", "error", "started")
+             "pct", "log", "error", "started", "start_at")
 
     def save(self) -> None:
         try:
@@ -162,7 +165,7 @@ class Job:
                 "log": self.log[-60:], "error": self.error, "input": _show(self.input),
                 "input_name": os.path.basename(self.input), "output": _show(self.output),
                 "out_dir": _show(self.out_dir), "filters": self.filters, "cover": self.cover,
-                "audio": self.audio, "review": self.review,
+                "audio": self.audio, "review": self.review, "start_at": self.start_at,
                 "elapsed": round(time.time() - self.started), "stage_elapsed": round(time.time() - self.stage_started)}
 
     # Progress lines from the CLI, e.g. "  scanned video  45.0%".
@@ -193,6 +196,17 @@ class Job:
 
     def analyze(self) -> None:
         try:
+            # A scheduled start waits here. Checking the clock every second (rather than one long sleep)
+            # lets Cancel and "Start now" work, and starts right away if the computer slept past the time.
+            while self.state == "waiting" and time.time() < self.start_at:
+                if self.cancelled:
+                    raise RuntimeError("cancelled")
+                time.sleep(1)
+            if self.cancelled:
+                raise RuntimeError("cancelled")
+            if self.state == "waiting":
+                self.state, self.stage, self.started, self.stage_started = "analyzing", "Starting", time.time(), time.time()
+                self.save()
             self._run(["analyze", self.input, "--workdir", self.workdir, "--filters", ",".join(self.filters),
                        "--audio", self.audio, "--cover", self.cover])
             if self.review:
@@ -243,8 +257,11 @@ class Job:
         return os.path.join(self.workdir, "plan.json")
 
 
+BUSY = ("waiting", "analyzing", "rendering")  # states that block starting another movie
 JOB: Job | None = Job.restore()
 LOCK = threading.Lock()
+if JOB and JOB.state == "waiting":  # CleanCut restarted before a scheduled start: keep the appointment
+    threading.Thread(target=JOB.analyze, daemon=True).start()
 
 
 def _job() -> Job:
@@ -359,7 +376,7 @@ async def start(req: Request):
     global JOB
     body = await req.json()
     with LOCK:
-        if JOB and JOB.state in ("analyzing", "rendering"):
+        if JOB and JOB.state in BUSY:
             raise HTTPException(409, "A movie is already being processed.")
         input_path = _real(body["input"])
         out_dir = _real(body.get("out_dir", ""))
@@ -372,7 +389,13 @@ async def start(req: Request):
             raise HTTPException(400, "The output would replace the movie itself. Pick another folder.")
         cover = body.get("cover") if body.get("cover") in ("box", "blur") else "box"
         audio = body.get("audio") if body.get("audio") in ("mute", "bleep") else "mute"
-        JOB = Job(input_path, out_dir, filters, cover, audio, bool(body.get("review", True)))
+        try:
+            start_at = max(0.0, float(body.get("start_at") or 0))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "That start time doesn't look right.")
+        if start_at > time.time() + 7 * 86400:
+            raise HTTPException(400, "Pick a start time within the next week.")
+        JOB = Job(input_path, out_dir, filters, cover, audio, bool(body.get("review", True)), start_at)
         JOB.save()
         threading.Thread(target=JOB.analyze, daemon=True).start()
     return JOB.public()
@@ -384,11 +407,20 @@ def cancel():
     return {"ok": True}
 
 
+@app.post("/api/start-now")
+def start_now():
+    """Skip the rest of the wait for a scheduled start."""
+    job = _job()
+    if job.state == "waiting":
+        job.start_at = time.time()
+    return {"ok": True}
+
+
 @app.post("/api/reset")
 def reset():
     global JOB
     with LOCK:
-        if JOB and JOB.state in ("analyzing", "rendering"):
+        if JOB and JOB.state in BUSY:
             raise HTTPException(409, "Cancel the current movie first.")
         JOB = None
         try:

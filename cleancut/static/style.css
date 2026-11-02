@@ -91,6 +91,13 @@ legend { font-weight: 600; padding: 0 6px; }
 .check.inline { padding: 0; align-items: center; }
 .check.inline input { margin: 0; }
 .review-toggle { margin-top: 12px; }
+.when { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.when-time { display: flex; gap: 10px; align-items: center; }
+.when-time input { font: inherit; font-size: 18px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--card); color: var(--text); }
+.when-time:has(input:disabled) { opacity: 0.45; }
+.wait-clock { font-size: 44px; font-weight: 700; margin: 4px 0; }
+.wait-buttons { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 8px; }
 
 .options { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 16px; }
 .opt-label { font-size: 14px; color: var(--muted); margin-bottom: 6px; }

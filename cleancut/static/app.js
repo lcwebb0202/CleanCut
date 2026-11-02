@@ -1,7 +1,7 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-const SCREENS = ["setup", "working", "review-screen", "done", "failed"];
+const SCREENS = ["setup", "waiting", "working", "review-screen", "done", "failed"];
 let STATE = null;          // last /api/state
 let movie = null;          // {path, shown, dir} chosen input (media-relative path)
 let outDir = null;         // {path, shown}
@@ -95,8 +95,54 @@ function initSetup() {
   setSeg("cover", load("cover", "box"));
   $("review").checked = load("review", true);
   outDir = load("outDir2", null);
+  resetWhen();
   updateSetup();
 }
+
+// When to start: always back to 2 AM and "not right away" (on purpose not remembered, so an
+// overnight run is the default every time).
+const DEFAULT_START = "02:00";
+
+function resetWhen() {
+  $("start-time").value = DEFAULT_START;
+  $("start-now").checked = false;
+}
+
+function fmtClock(date) {
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+// The next time the clock shows the chosen time (later today, or tomorrow if it has passed).
+function nextStart() {
+  const [h, m] = $("start-time").value.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return null;
+  const at = new Date();
+  at.setHours(h, m, 0, 0);
+  if (at <= new Date()) at.setDate(at.getDate() + 1);
+  return at;
+}
+
+function updateWhen() {
+  const now = $("start-now").checked;
+  $("start-time").disabled = now;
+  const at = now ? null : nextStart();
+  let hint;
+  if (now) hint = "It starts as soon as you press Start.";
+  else if (!at) hint = "Pick a time, or tick Start right away.";
+  else {
+    hint = `It starts at ${fmtClock(at)}, in ${fmtDuration(Math.round((at - Date.now()) / 1000))}. `
+      + "Leave the computer on and plugged in, and don't let it go to sleep.";
+    if ($("review").checked) hint += " It will wait for your review before saving; untick the review box above to have the movie saved by morning.";
+  }
+  $("when-hint").textContent = hint;
+  $("start").textContent = now ? "Start" : at ? "Start at " + fmtClock(at) : "Start";
+  return now || !!at;
+}
+
+$("start-now").addEventListener("change", updateSetup);
+$("start-time").addEventListener("input", updateSetup);
+$("review").addEventListener("change", updateSetup);
+setInterval(() => { if (!$("setup").hidden) updateWhen(); }, 30000);  // keeps "in 5 h 10 min" current
 
 // Where to save: the folder picked last time, else the save folder from the settings
 // (e.g. "CleanCut Edited Media"), else next to the movie.
@@ -133,7 +179,8 @@ function updateSetup() {
   $("out-name").textContent = "";
   $("out-note").hidden = true;
   if (movie && dir) showOutputInfo(movie.path, dir.path);
-  $("start").disabled = !movie || chosenFilters().length === 0;
+  const timeOk = updateWhen();
+  $("start").disabled = !movie || chosenFilters().length === 0 || !timeOk;
 }
 
 document.querySelectorAll('input[name="f"]').forEach((c) => c.addEventListener("change", updateSetup));
@@ -192,6 +239,7 @@ $("start").addEventListener("click", async () => {
     input: movie.path,
     out_dir: saveDir().path,
     filters, audio: segValue("audio"), cover: segValue("cover"), review: $("review").checked,
+    start_at: $("start-now").checked ? 0 : nextStart().getTime() / 1000,
   };
   save("filters2", filters); save("audio", body.audio); save("cover", body.cover); save("review", body.review);
   $("start").disabled = true;
@@ -264,6 +312,30 @@ $("b-newfolder").addEventListener("click", async () => {
     const d = await api("/api/folder", { method: "POST", body: { path: browserPath, name } });
     await browseTo(d.path);
   } catch (e) { alert(e.message); }
+});
+
+// ------------------------------------------------------------ waiting for a scheduled start
+
+function showWaiting(job) {
+  show("waiting");
+  const at = new Date(job.start_at * 1000);
+  $("wait-movie").textContent = job.input_name;
+  $("wait-at").textContent = fmtClock(at);
+  const left = Math.round(job.start_at - Date.now() / 1000);
+  $("wait-left").textContent = left > 0 ? "Starts in " + fmtDuration(left) : "Starting…";
+  $("wait-review").textContent = job.review
+    ? "When it's done looking through the movie, it waits for your review before saving."
+    : "The filtered movie is saved without a review, usually by morning.";
+}
+
+$("wait-cancel").addEventListener("click", async () => {
+  if (!confirm("Cancel the scheduled start?")) return;
+  await api("/api/cancel", { method: "POST" });
+  refresh();
+});
+$("wait-now").addEventListener("click", async () => {
+  await api("/api/start-now", { method: "POST" });
+  refresh();
 });
 
 // ------------------------------------------------------------ progress
@@ -471,6 +543,7 @@ async function startOver() {
   await api("/api/reset", { method: "POST" });
   movie = null;
   review = null;
+  resetWhen();
   updateSetup();
   refresh();
 }
@@ -489,6 +562,9 @@ async function refresh() {
   if (!job) {
     show("setup");
     updateSetup();
+  } else if (job.state === "waiting") {
+    showWaiting(job);
+    pollTimer = setTimeout(refresh, 5000);
   } else if (job.state === "analyzing" || job.state === "rendering") {
     showWorking(job);
     pollTimer = setTimeout(refresh, 1500);

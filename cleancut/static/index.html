@@ -92,9 +92,35 @@
         <span>Let me review what was found before saving <em>blurred previews, nothing graphic</em></span></label>
     </div>
 
+    <div class="card">
+      <h2><span class="num">4</span> When to start</h2>
+      <div class="when">
+        <label class="when-time">Start at <input type="time" id="start-time" value="02:00" autocomplete="off"></label>
+        <label class="check inline"><input type="checkbox" id="start-now" autocomplete="off"><span>Start right away</span></label>
+      </div>
+      <div class="hint" id="when-hint"></div>
+    </div>
+
     <div class="start-row">
       <div class="error" id="start-error"></div>
       <button class="btn primary big" id="start" disabled>Start</button>
+    </div>
+  </section>
+
+  <!-- ============ WAITING (scheduled start) ============ -->
+  <section id="waiting" hidden>
+    <div class="card center">
+      <div class="eyebrow" id="wait-movie"></div>
+      <h2>Waiting to start</h2>
+      <div class="wait-clock" id="wait-at"></div>
+      <div class="hint" id="wait-left"></div>
+      <p class="hint">Leave the computer on and plugged in, and don't let it go to sleep. If it does sleep,
+        CleanCut starts as soon as it wakes up. You can close this page.</p>
+      <p class="hint" id="wait-review"></p>
+      <div class="wait-buttons">
+        <button class="btn" id="wait-cancel">Cancel</button>
+        <button class="btn primary" id="wait-now">Start now instead</button>
+      </div>
     </div>
   </section>
 
