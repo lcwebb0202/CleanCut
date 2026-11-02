@@ -22,8 +22,19 @@ $versionFile = Join-Path $here ".cleancut-version"   # the GitHub commit this fo
 $filesList = Join-Path $here ".cleancut-files.txt"   # the files that came from GitHub
 $keep = @(".env", ".cleancut-version", ".cleancut-files.txt")
 
+# GitHub (and Windows) may hand out an answer saved up to a minute ago, which right after a new
+# version came out says the old one is newest. The extra "t=" makes every question a fresh one.
 function Get-GitHub($url) {
-    Invoke-RestMethod $url -TimeoutSec 15 -Headers @{ "User-Agent" = "CleanCut-updater" }
+    $sep = $(if ($url.Contains("?")) { "&" } else { "?" })
+    Invoke-RestMethod "$url${sep}t=$([DateTime]::UtcNow.Ticks)" -TimeoutSec 15 `
+        -Headers @{ "User-Agent" = "CleanCut-updater"; "Cache-Control" = "no-cache" }
+}
+
+# True when this folder already has $new: the same version, or a newer one (never "update" backwards).
+function Test-HasVersion($old, $new) {
+    if ($old -eq $new) { return $true }
+    if (-not $old) { return $false }
+    try { return (Get-GitHub "$api/compare/$old...$new").status -in @("behind", "identical") } catch { return $false }
 }
 
 function Get-Installed {
@@ -108,6 +119,8 @@ if ($Record) {
     } catch { }
     exit 0
 }
+
+if ($installed -and (Test-HasVersion $installed $latest)) { $installed = $latest }
 
 if ($Info) {
     $news = @()

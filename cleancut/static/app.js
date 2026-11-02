@@ -592,7 +592,8 @@ function renderUpdate() {
     : "";
   $("upd-check").disabled = !u.helper || checking || !!updating || busyUpdating;
   $("upd-check").classList.toggle("spin", checking);
-  $("u-news").replaceChildren(...(u.news || []).map((n) =>
+  const news = u.news && u.news.length ? u.news : [{ title: "Improvements and fixes", text: "" }];
+  $("u-news").replaceChildren(...news.map((n) =>
     el("li", {}, el("div", { class: "t" }, n.title), n.text ? el("div", { class: "d" }, n.text) : null)));
   $("u-checked").textContent = u.checked
     ? "Checked " + new Date(u.checked * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })
