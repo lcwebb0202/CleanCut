@@ -1,8 +1,37 @@
 # CleanCut
 
-CleanCut makes a family-friendly copy of a movie, ready for Jellyfin. You give it a movie, tick what you
-want filtered, and it saves a new copy next to the original. It **covers** things instead of skipping
-them, so you still follow the story.
+**An AI video filter that makes a family-friendly copy of any video file: it mutes swearing and covers
+nudity, and runs entirely on your own computer.**
+
+You give it a video, tick what you want filtered, and it saves a new copy next to the original, ready to
+watch or to add to a media server like Jellyfin. It **covers** things instead of skipping them, so you
+still follow the story. It works on any video file you have the right to use: family videos, your own
+YouTube or class projects, clips for a church or school group, or movies in your own library.
+
+> **Built with AI.** CleanCut was built almost entirely by an AI coding assistant
+> ([Claude Code](https://claude.com/claude-code)), directed, tested and reviewed by me. It's a personal
+> project, shared as is: **no guarantees, no warranty**. It can miss things or make mistakes, and I'm
+> not responsible for how it's used or for any problems it causes. Only use it on videos you have the
+> right to use, and check anything that really matters yourself.
+
+### How it works, in short
+
+- **Speech:** [faster-whisper](https://github.com/SYSTRAN/faster-whisper) transcribes the dialogue word
+  by word. When the video has text subtitles, every swear in them is checked against what was heard, and
+  missed lines are listened to again. On one test film, speech recognition alone caught 80 of 138
+  subtitled swears; with the subtitle check it caught all of them.
+- **Voice-only muting:** on surround sound, a swear is removed by cancelling just the dialogue channel,
+  so music and sound effects keep playing. A per-word test falls back to muting every speaker when the
+  voice (or its room echo) is heard on other speakers too.
+- **Pictures:** [NudeNet](https://github.com/notAI-tech/NudeNet) finds exposed body parts, and
+  [CLIP](https://github.com/openai/CLIP) with the [LAION safety classifier](https://github.com/LAION-AI/CLIP-based-NSFW-Detector)
+  recognizes sexual or suggestive scenes. Covers start at the camera cut, before anything shows,
+  because early and too big beats late and too small. Redesigning these rules took one test film from
+  380 flagged moments (mostly false alarms) to 24, with every real scene still caught.
+- **Review without seeing it:** the optional review screen shows heavily blurred previews with
+  everything detected painted black.
+- **The app:** a FastAPI web app in Docker with a queue for overnight runs, NVIDIA GPU acceleration
+  when there is one (it also runs on a plain laptop, just slower), and one-click updates.
 
 - **Nudity:** covered with a big black box (or a heavy blur), or the whole screen goes black.
 - **Sex scenes:** cut out if nobody is talking. If people are talking, the screen goes black and you still hear them.
@@ -105,19 +134,19 @@ filtered copies land right next to the originals.
 ### The new file and Jellyfin
 
 The new file gets the original's full name plus ` - Filtered`, for example
-`Deadpool (2016) [imdbid-tt1431045] - [Bluray-1080p][EAC3 5.1][x264]-hallowed - Filtered.mkv`.
+`My Movie (2020) - 1080p - Filtered.mkv`.
 The original is never renamed or changed.
 
 Saved **in the same folder as the original**, Jellyfin shows the two as one movie with two versions:
 the original stays the one that plays by default, and the copy appears in the version menu as **Filtered**.
 (Tested on Jellyfin 12.4.) This works when each movie has its own folder and the file name starts with
-the folder name, followed by ` - ` or nothing, which is how Radarr names files by default:
+the folder name, followed by ` - ` or nothing, which is how most media managers name files:
 
 | Works | Shows up as a second movie instead |
 |---|---|
 | `Up (2009)/Up (2009).mkv` | `Cars (2006)/Cars (2006) [Bluray-1080p].mkv` (no ` - ` after the folder name) |
 | `Inception (2010)/Inception (2010) - WEBDL.mkv` | `All Movies/Toy Story (1995) - Bluray-1080p.mkv` (no folder of its own) |
-| `Deadpool (2016)/Deadpool (2016) [imdbid-tt1431045] - [Bluray-1080p]....mkv` | |
+| `My Movie (2020)/My Movie (2020) - 1080p.mkv` | |
 
 CleanCut checks this before you start and shows a yellow note if Jellyfin wouldn't group them.
 Don't rename the original to `... - Original`: Jellyfin sorts version names alphabetically, so
@@ -177,4 +206,9 @@ CLIP (ViT-L/14) recognizes sex/suggestive scenes; ffmpeg does the rest. The comm
 `docker compose run --rm cleancut process "/media/Movie (2020).mkv" --out /media/Filtered`.
 Run `docker compose run --rm cleancut --help` for options.
 
-Built on ideas from PureFrame (MIT), monkeyplug/cleanvid (BSD) and Cens-arr (MIT).
+Built on ideas from PureFrame (MIT), monkeyplug/cleanvid (BSD) and Cens-arr (MIT). The models it uses
+(faster-whisper, NudeNet, CLIP and the LAION classifier) keep their own licenses.
+
+**Disclaimer:** CleanCut is provided "as is", without warranty of any kind. Use it at your own risk, and
+only on videos you have the right to use and modify. It was written with the help of AI and tested by
+hand, not certified for any purpose.
