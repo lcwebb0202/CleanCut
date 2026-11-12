@@ -267,8 +267,14 @@ def output_name(input_path: str) -> str:
 
     The whole original name is kept, so in Jellyfin (12.x, tested) the two group as versions of one
     movie, the original stays the default (a name sorts before itself plus extra text) and the
-    copy is labeled "Filtered". The original file is never renamed."""
+    copy is labeled "Filtered". The original file is never renamed.
+
+    A name ending in " - Default" (how some libraries label the version that plays by default) gets
+    " - Filtered" in its place: 'Galaxy Quest (1999) [tmdbid-926] - Default.mkv' ->
+    'Galaxy Quest (1999) [tmdbid-926] - Filtered.mkv'. Jellyfin then shows "Default" and "Filtered",
+    and Default (sorting first) stays the one that plays."""
     stem = os.path.splitext(os.path.basename(input_path))[0]
+    stem = re.sub(r"\s+-\s*default$", "", stem, flags=re.IGNORECASE)
     return f"{stem}{OUTPUT_SUFFIX}.mkv"
 
 

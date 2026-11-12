@@ -134,7 +134,9 @@ filtered copies land right next to the originals.
 ### The new file and Jellyfin
 
 The new file gets the original's full name plus ` - Filtered`, for example
-`My Movie (2020) - 1080p - Filtered.mkv`.
+`My Movie (2020) - 1080p - Filtered.mkv`. If the name ends in ` - Default` (some libraries label the
+version that plays by default that way), ` - Filtered` takes its place: `My Movie (2020) - Default.mkv`
+becomes `My Movie (2020) - Filtered.mkv`, and Jellyfin shows the versions as *Default* and *Filtered*.
 The original is never renamed or changed.
 
 Saved **in the same folder as the original**, Jellyfin shows the two as one movie with two versions:
