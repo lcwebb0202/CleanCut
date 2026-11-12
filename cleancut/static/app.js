@@ -677,6 +677,7 @@ $("r-back").addEventListener("click", () => {
 let updating = null;       // {started: STATE.update.started, at: ms} once "Update now" was clicked
 let updateTimer = null;
 let checkAsked = 0;        // when the round arrow was clicked (ms)
+let checkSeen = false;     // CleanCut has said it's checking since then
 let note = null;           // {text, cls, until}: a short message in the pill ("Updated", "Couldn't check")
 let dlgView = "news";      // the update window shows: "news" / "updating" / "done" / "current" / "error"
 let dlgError = "";
@@ -698,9 +699,18 @@ function renderUpdate() {
     if (u.status === "error") [updating, dlgView, dlgError] = [null, "error", u.error];
     else if (u.status === "current") [updating, dlgView] = [null, "current"];
   }
-  if (checkAsked && !u.checking) {
-    if (u.checked * 1000 < checkAsked - 2000) note = { text: "Couldn't check", cls: "quiet", until: Date.now() + 6000 };
-    checkAsked = 0;
+  // A check is over once a newer "last checked" time arrives. It only failed if CleanCut said it was
+  // checking and then stopped without one (or nothing came back for 70 s): judging it any earlier,
+  // from the state fetched before the click, said "Couldn't check" for checks that worked.
+  if (checkAsked) {
+    if (u.checking) checkSeen = true;
+    if (u.checked * 1000 >= checkAsked - 2000) {
+      checkAsked = 0;
+    } else if ((checkSeen && !u.checking) || Date.now() - checkAsked > 70000) {
+      checkAsked = 0;
+      note = { text: "Couldn't check", cls: "quiet", until: Date.now() + 6000,
+               why: "Couldn't reach GitHub. Check the internet connection and try again." };
+    }
   }
   if (note && Date.now() > note.until) note = null;
   const busyUpdating = !!updating || u.status === "requested" || u.status === "updating";
@@ -718,7 +728,7 @@ function renderUpdate() {
   $("upd-label").textContent = label;
   $("upd-btn").className = "upd-btn " + pill;
   $("upd-btn").dataset.open = open ? "1" : "";
-  $("upd-btn").title = u.checked ? "Last checked " + fmtChecked(u.checked) : "";
+  $("upd-btn").title = note && note.why ? note.why : u.checked ? "Last checked " + fmtChecked(u.checked) : "";
   $("upd-check").disabled = !u.helper || checking || busyUpdating;
   $("upd-check").classList.toggle("spin", checking);
 
@@ -787,13 +797,14 @@ $("upd-btn").addEventListener("click", () => {
 });
 $("upd-check").addEventListener("click", async () => {
   checkAsked = Date.now();
+  checkSeen = false;
   note = null;
   renderUpdate();
   try {
     await api("/api/update-check", { method: "POST" });
   } catch (e) {
     checkAsked = 0;
-    note = { text: "Couldn't check", cls: "quiet", until: Date.now() + 6000 };
+    note = { text: "Couldn't check", cls: "quiet", until: Date.now() + 6000, why: e.message };
   }
   pollUpdate();
 });
