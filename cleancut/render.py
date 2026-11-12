@@ -203,9 +203,12 @@ def _audio_filter(info: MediaInfo, center_only: list, everywhere: list, mode: st
                  f"[speech][bleep]amix=inputs=2:duration=first,volume=2[clean]")
     if skips:
         # Keep the stream's original start offset so it stays in sync with the video. The original
-        # audio, kept as a second track, loses the same scenes (and nothing else).
-        cut = f"aselect='not({_between(skips)})',asetpts='N/SR/TB+{info.audio_offset:.3f}/TB'"
-        graph += f";[clean]{cut}[aout];{src}{cut}[aorig]"
+        # audio, kept as a second track, loses the same scenes (and nothing else), and so does every
+        # other audio track (other languages), so they stay in sync too.
+        cut = lambda off: f"aselect='not({_between(skips)})',asetpts='N/SR/TB+{off:.3f}/TB'"
+        graph += f";[clean]{cut(info.audio_offset)}[aout];{src}{cut(info.audio_offset)}[aorig]"
+        for t in info.other_audio:
+            graph += f";[1:a:{t['index']}]{cut(t['offset'])}[aother{t['index']}]"
     else:
         graph = graph.replace("[clean]", "[aout]")
     return graph
@@ -214,6 +217,11 @@ def _audio_filter(info: MediaInfo, center_only: list, everywhere: list, mode: st
 LANGUAGES = {"eng": "English", "spa": "Spanish", "fre": "French", "fra": "French", "ger": "German",
              "deu": "German", "ita": "Italian", "por": "Portuguese", "jpn": "Japanese", "kor": "Korean",
              "chi": "Chinese", "zho": "Chinese", "rus": "Russian", "dut": "Dutch", "nld": "Dutch"}
+
+
+def _ac3(channels: int) -> tuple[str, str]:
+    """Codec and bitrate for re-encoded audio (AC3/E-AC3: AAC in MKV came out ~21 ms late)."""
+    return "ac3" if channels <= 6 else "eac3", AUDIO_BITRATE.get(channels, "640k")
 
 
 def _audio_titles(info: MediaInfo) -> tuple[str, str]:
@@ -393,7 +401,7 @@ def render(plan: dict, out_path: str, log=print) -> None:
             # Two tracks: the filtered audio first, as the default, and the untouched original after
             # it, for anyone who wants to switch back (like picking another language). The original
             # is copied as is, unless scenes were cut: then it loses the same scenes, re-encoded.
-            codec = ["ac3" if info.audio_channels <= 6 else "eac3", AUDIO_BITRATE.get(info.audio_channels, "640k")]
+            codec = _ac3(info.audio_channels)
             filtered, original = _audio_titles(info)
             maps += ["-/filter_complex", script, "-map", "[aout]", "-c:a:0", codec[0], "-b:a:0", codec[1],
                      "-map", "[aorig]" if skips else f"1:a:{info.audio_index}"]
@@ -402,8 +410,23 @@ def render(plan: dict, out_path: str, log=print) -> None:
                 maps += [f"-metadata:s:a:{n}", f"title={title}", f"-disposition:a:{n}", "default" if n == 0 else "0"]
                 if info.audio_language:
                     maps += [f"-metadata:s:a:{n}", f"language={info.audio_language}"]
+            n_audio = 2
         else:
-            maps += ["-map", f"1:a:{info.audio_index}", "-c:a", "copy"]
+            maps += ["-map", f"1:a:{info.audio_index}", "-c:a:0", "copy"]
+            n_audio = 1
+        # Other audio tracks (other languages, commentary) are kept but not filtered: CleanCut only
+        # listens for English. Cut scenes are cut from them too.
+        for t in info.other_audio:
+            if skips:
+                codec = _ac3(t["channels"])
+                maps += ["-map", f"[aother{t['index']}]", f"-c:a:{n_audio}", codec[0], f"-b:a:{n_audio}", codec[1]]
+            else:
+                maps += ["-map", f"1:a:{t['index']}", f"-c:a:{n_audio}", "copy"]
+            name = LANGUAGES.get(t["language"].lower()) or t["title"] or "Other audio"
+            maps += [f"-metadata:s:a:{n_audio}", f"title={name} (not filtered)", f"-disposition:a:{n_audio}", "0"]
+            if t["language"]:
+                maps += [f"-metadata:s:a:{n_audio}", f"language={t['language']}"]
+            n_audio += 1
 
     # Subtitles: text ones are cleaned and re-timed; image ones are copied only if untouched.
     sub_args, n_out, next_input = [], 0, 2
