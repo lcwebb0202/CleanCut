@@ -17,6 +17,7 @@ class MediaInfo:
     audio_channels: int = 2
     audio_layout: str = "stereo"
     audio_rate: int = 48000
+    audio_language: str = ""  # its language tag ("eng"), if it has one
     color: dict = field(default_factory=dict)
     # Where each stream starts, relative to the file's start. ffmpeg filters see this timeline,
     # so all plan times use it too.
@@ -71,6 +72,7 @@ def probe(path: str) -> MediaInfo:
         info.audio_channels = int(audio.get("channels", 2))
         info.audio_layout = audio.get("channel_layout") or ("stereo" if info.audio_channels == 2 else "mono")
         info.audio_rate = int(audio.get("sample_rate", 48000))
+        info.audio_language = (audio.get("tags") or {}).get("language", "")
     for key in ("color_primaries", "color_transfer", "color_space", "color_range"):
         if video.get(key) and video[key] != "unknown":
             info.color[key] = video[key]

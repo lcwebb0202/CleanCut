@@ -39,6 +39,8 @@ YouTube or class projects, clips for a church or school group, or movies in your
 - **Language:** F-word, other strong swears, mild words (d**n, h**l), taking God's name in vain, and slurs,
   each with its own checkbox. Words are muted (or bleeped, if you like). On surround sound (5.1, 7.1) only the
   voices are muted, so the music and sound effects keep playing. Subtitles show them as `d**n`.
+  The filtered copy has two audio tracks: **English - Filtered**, which plays by default, and the untouched
+  **English - Original**, which you can pick in the player's audio menu like another language.
   If the movie has text subtitles, CleanCut double-checks against them, which catches lines shouted
   over loud action that speech recognition misses.
 - **Review (optional):** before saving, see everything it found as **blurred** pictures, with anything
