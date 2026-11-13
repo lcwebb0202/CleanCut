@@ -217,9 +217,9 @@ CLIP (ViT-L/14) recognizes sex/suggestive scenes; ffmpeg does the rest. The comm
 `docker compose run --rm cleancut process "/media/Movie (2020).mkv" --out /media/Filtered`.
 Run `docker compose run --rm cleancut --help` for options.
 
-**Logo files** (for a dashboard or homepage) are in [`logo/`](logo): `cleancut-icon` is the C on a dark
-rounded square, `cleancut-icon-white` / `-dark` are just the C on a see-through background, and
-`cleancut-logo-white` / `-dark` are the full name (white for dark backgrounds, dark for light ones).
+**Logo files** (for a dashboard or homepage) are in [`logo/`](logo): `cleancut-icon` is the C in white
+and `cleancut-icon-dark` the C in dark, both on a see-through square, and `cleancut-logo-white` / `-dark`
+are the full name (white for dark backgrounds, dark for light ones).
 Each comes as SVG (sharp at any size) and PNG.
 
 Built on ideas from PureFrame (MIT), monkeyplug/cleanvid (BSD) and Cens-arr (MIT). The models it uses
