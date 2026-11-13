@@ -5,6 +5,11 @@
   </picture>
 </h1>
 
+> **Logo for a dashboard or homepage:**
+> [icon (PNG)](logo/cleancut-icon.png) · [icon (SVG)](logo/cleancut-icon.svg) · [all logo files](logo).
+> Direct link to paste into a dashboard: `https://raw.githubusercontent.com/lcwebb0202/CleanCut/main/logo/cleancut-icon.png`
+> (white C, see-through background; `cleancut-icon-dark.png` is the dark one for light backgrounds).
+
 **An AI video filter that makes a family-friendly copy of any video file: it mutes swearing and covers
 nudity, and runs entirely on your own computer.**
 
@@ -220,7 +225,8 @@ Run `docker compose run --rm cleancut --help` for options.
 **Logo files** (for a dashboard or homepage) are in [`logo/`](logo): `cleancut-icon` is the C in white
 and `cleancut-icon-dark` the C in dark, both on a see-through square, and `cleancut-logo-white` / `-dark`
 are the full name (white for dark backgrounds, dark for light ones).
-Each comes as SVG (sharp at any size) and PNG.
+Each comes as SVG (sharp at any size) and PNG. They're all made from one drawing by
+`logo/make_logo.py`, which also updates the C in the page header and the browser-tab icon.
 
 Built on ideas from PureFrame (MIT), monkeyplug/cleanvid (BSD) and Cens-arr (MIT). The models it uses
 (faster-whisper, NudeNet, CLIP and the LAION classifier) keep their own licenses.
