@@ -91,21 +91,19 @@ document.querySelectorAll(".seg[data-name]").forEach((seg) => {
 // ------------------------------------------------------------ setup screen (adding movies)
 
 function initSetup() {
-  // Mild words and slurs start unticked (the user, 2026-11-13). A new key, so earlier saved choices
-  // (which had them ticked) don't hide the new default.
-  const filters = load("filters3", ["nudity", "sex", "suggestive", "fword", "strong", "blasphemy"]);
-  document.querySelectorAll('input[name="f"]').forEach((c) => (c.checked = filters.includes(c.value)));
-  setSeg("audio", load("audio", "mute"));
-  setSeg("cover", load("cover", "box"));
   resetChoices();
   updateSetup();
 }
 
-// When to start and review: always back to 2 AM, "not right away" and no review (on purpose not
-// remembered, so an unattended overnight run is the default every time).
+// Every choice goes back to the same defaults each time (on purpose not remembered, like the 2 AM
+// start): everything filtered except mild words and slurs, muted, black box, start at 2 AM, no review.
+const DEFAULT_FILTERS = ["nudity", "sex", "suggestive", "fword", "strong", "blasphemy"];
 const DEFAULT_START = "02:00";
 
 function resetChoices() {
+  document.querySelectorAll('input[name="f"]').forEach((c) => (c.checked = DEFAULT_FILTERS.includes(c.value)));
+  setSeg("audio", "mute");
+  setSeg("cover", "box");
   $("start-time").value = DEFAULT_START;
   $("start-now").checked = false;
   $("review").checked = false;
@@ -285,7 +283,7 @@ $("start").addEventListener("click", async () => {
     filters, audio: segValue("audio"), cover: segValue("cover"), review: $("review").checked,
     start_at: queueBusy() || $("start-now").checked ? 0 : nextStart().getTime() / 1000,
   };
-  save("filters3", filters); save("audio", body.audio); save("cover", body.cover);
+
   $("start").disabled = true;
   $("start-error").textContent = "";
   try {

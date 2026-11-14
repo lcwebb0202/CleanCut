@@ -48,6 +48,8 @@ YouTube or class projects, clips for a church or school group, or movies in your
 - **Sexually suggestive:** strippers, underwear, intense or erotic kissing. The screen goes black or a box covers it.
 - **Language:** F-word, other strong swears, mild words (d**n, h**l), taking God's name in vain, and slurs,
   each with its own checkbox (mild words and slurs start unticked; tick them if you want them too).
+  The page always opens with the same choices, like the 2:00 AM start time: nothing is carried over
+  from last time.
   Words are muted (or bleeped, if you like). On surround sound (5.1, 7.1) only the
   voices are muted, so the music and sound effects keep playing. Subtitles show them as `d**n`.
   The filtered copy has two audio tracks: **English - Filtered**, which plays by default, and the untouched
