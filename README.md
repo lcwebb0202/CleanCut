@@ -47,7 +47,7 @@ YouTube or class projects, clips for a church or school group, or movies in your
 - **Sex scenes:** cut out if nobody is talking. If people are talking, the screen goes black and you still hear them.
 - **Sexually suggestive:** strippers, underwear, intense or erotic kissing. The screen goes black or a box covers it.
 - **Language:** F-word, other strong swears, mild words (d**n, h**l), taking God's name in vain, and slurs,
-  each with its own checkbox (mild words and slurs start unticked; tick them if you want them too).
+  each with its own checkbox (mild words, God's name and slurs start unticked; tick them if you want them too).
   The page always opens with the same choices, like the 2:00 AM start time: nothing is carried over
   from last time.
   Words are muted (or bleeped, if you like). On surround sound (5.1, 7.1) only the
