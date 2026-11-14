@@ -91,7 +91,9 @@ document.querySelectorAll(".seg[data-name]").forEach((seg) => {
 // ------------------------------------------------------------ setup screen (adding movies)
 
 function initSetup() {
-  const filters = load("filters2", ["nudity", "sex", "suggestive", "fword", "strong", "mild", "blasphemy", "slurs"]);
+  // Mild words and slurs start unticked (the user, 2026-11-13). A new key, so earlier saved choices
+  // (which had them ticked) don't hide the new default.
+  const filters = load("filters3", ["nudity", "sex", "suggestive", "fword", "strong", "blasphemy"]);
   document.querySelectorAll('input[name="f"]').forEach((c) => (c.checked = filters.includes(c.value)));
   setSeg("audio", load("audio", "mute"));
   setSeg("cover", load("cover", "box"));
@@ -283,7 +285,7 @@ $("start").addEventListener("click", async () => {
     filters, audio: segValue("audio"), cover: segValue("cover"), review: $("review").checked,
     start_at: queueBusy() || $("start-now").checked ? 0 : nextStart().getTime() / 1000,
   };
-  save("filters2", filters); save("audio", body.audio); save("cover", body.cover);
+  save("filters3", filters); save("audio", body.audio); save("cover", body.cover);
   $("start").disabled = true;
   $("start-error").textContent = "";
   try {
