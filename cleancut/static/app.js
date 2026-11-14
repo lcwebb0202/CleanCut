@@ -96,14 +96,14 @@ function initSetup() {
 }
 
 // Every choice goes back to the same defaults each time (on purpose not remembered, like the 2 AM
-// start): everything filtered except mild words and slurs, muted, black box, start at 2 AM, no review.
+// start): everything filtered except mild words and slurs, muted, heavy blur, start at 2 AM, no review.
 const DEFAULT_FILTERS = ["nudity", "sex", "suggestive", "fword", "strong", "blasphemy"];
 const DEFAULT_START = "02:00";
 
 function resetChoices() {
   document.querySelectorAll('input[name="f"]').forEach((c) => (c.checked = DEFAULT_FILTERS.includes(c.value)));
   setSeg("audio", "mute");
-  setSeg("cover", "box");
+  setSeg("cover", "blur");
   $("start-time").value = DEFAULT_START;
   $("start-now").checked = false;
   $("review").checked = false;

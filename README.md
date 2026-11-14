@@ -43,7 +43,7 @@ YouTube or class projects, clips for a church or school group, or movies in your
 - **The app:** a FastAPI web app in Docker with a queue for overnight runs, NVIDIA GPU acceleration
   when there is one (it also runs on a plain laptop, just slower), and one-click updates.
 
-- **Nudity:** covered with a big black box (or a heavy blur), or the whole screen goes black.
+- **Nudity:** covered with a heavy blur (or a big black box, if you prefer), or the whole screen goes black.
 - **Sex scenes:** cut out if nobody is talking. If people are talking, the screen goes black and you still hear them.
 - **Sexually suggestive:** strippers, underwear, intense or erotic kissing. The screen goes black or a box covers it.
 - **Language:** F-word, other strong swears, mild words (d**n, h**l), taking God's name in vain, and slurs,
